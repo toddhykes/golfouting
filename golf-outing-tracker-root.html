@@ -516,8 +516,9 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🏆 Ryder Cup Style Golf Tracker</h1>
-            <p>Team competition with Match Play, Best Ball & Scramble</p>
+            <h1>🏆 Ryder Cup Style Golf Event Tracker</h1>
+            <p>Multi-round match play score tracker</p>
+            <p>Option for 'blowout bonus' if you want to punish unfair matchups</p>
             <div id="supabaseStatus" style="margin-top: 10px; font-size: 0.9em; opacity: 0.9;"></div>
         </div>
 
@@ -576,11 +577,13 @@
                     <input type="number" id="numRounds" min="1" max="5" value="1">
                 </div>
 
+                
                 <div class="form-group">
                     <label>Scoring Type</label>
+                    
                     <select id="scoringType">
-                        <option value="match">Match Play (Win/Loss/Tie per match)</option>
-                        <option value="stroke">Stroke Play (Total strokes)</option>
+                        <option value="match">Match Play</option>
+                        <option value="stroke" disabled>Stroke Play</option>    
                     </select>
                 </div>
 
