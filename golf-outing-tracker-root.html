@@ -520,6 +520,7 @@
             <p>Multi-round match play score tracker</p>
             <p>Option for 'blowout bonus' if you want to punish unfair matchups</p>
             <div id="supabaseStatus" style="margin-top: 10px; font-size: 0.9em; opacity: 0.9;"></div>
+            <div id="anthropicKeyStatus" style="margin-top: 6px; font-size: 0.9em; opacity: 0.9;"></div>
         </div>
 
         <div class="content">
@@ -560,6 +561,23 @@
                                 title="Clear old local events (keeps Supabase events)">
                             🗑️ Clear Local
                         </button>
+                    </div>
+                </div>
+
+                <!-- Anthropic API Key Section -->
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 2px solid #95a5a6; margin-bottom: 20px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <h3 style="margin:0; color:#2c3e50;">🤖 Anthropic API Key</h3>
+                        <span style="font-size:0.8em; color:#7f8c8d;">Required for course search</span>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <input type="password" id="anthropicApiKey" placeholder="sk-ant-api03-..."
+                            style="flex:1; padding:10px; border:2px solid #e0e0e0; border-radius:4px; font-family:monospace; font-size:0.9em;"
+                            oninput="saveAnthropicKey()">
+                        <button onclick="toggleApiKeyVisibility()" class="btn btn-secondary" style="padding:10px 14px;" title="Show/hide key">👁</button>
+                    </div>
+                    <div style="margin-top:6px; font-size:0.8em; color:#7f8c8d;">
+                        Your key is stored locally in this browser only. Get yours at <a href="https://console.anthropic.com" target="_blank" style="color:#3498db;">console.anthropic.com</a>
                     </div>
                 </div>
 
@@ -795,7 +813,7 @@
                 const roundDiv = document.createElement('div');
                 roundDiv.style.cssText = 'background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 10px;';
                 roundDiv.innerHTML = `
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; align-items: end;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; align-items: end; margin-bottom: 15px;">
                         <div>
                             <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #2c3e50;">
                                 Round ${i} Format
@@ -811,12 +829,303 @@
                             <input type="date" id="date${i}" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 4px;">
                         </div>
                     </div>
+                    <div style="border-top: 1px solid #dee2e6; padding-top: 15px;">
+                        <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #2c3e50;">⛳ Golf Course (Optional)</label>
+                        <div id="courseWidget${i}">
+                            <div style="display:grid; grid-template-columns:1fr 1fr auto; gap:8px; align-items:center;">
+                                <input type="text" id="courseLocation${i}" placeholder="City, State or ZIP (optional)"
+                                    style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 4px;"
+                                    onkeypress="if(event.key==='Enter') searchCourses(${i})">
+                                <input type="text" id="courseSearch${i}" placeholder="Course name (full or partial)"
+                                    style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 4px;"
+                                    onkeypress="if(event.key==='Enter') searchCourses(${i})">
+                                <button class="btn btn-secondary" onclick="searchCourses(${i})" style="padding: 10px 16px; white-space: nowrap;">
+                                    🔍 Search
+                                </button>
+                            </div>
+                            <div style="font-size:0.8em;color:#7f8c8d;margin-top:5px;">Enter a location, a course name, or both</div>
+                            <div id="courseResults${i}" style="margin-top: 10px;"></div>
+                            <div id="courseSelected${i}" style="margin-top: 10px;"></div>
+                        </div>
+                    </div>
                 `;
                 container.appendChild(roundDiv);
             }
         }
 
-        function saveEventSetup() {
+        // ═══════════════════════════════════════════════════════
+        // GOLF COURSE SEARCH & SCORECARD
+        // ═══════════════════════════════════════════════════════
+
+        async function callClaude(prompt) {
+            const apiKey = localStorage.getItem('anthropicApiKey') || '';
+            if (!apiKey) {
+                throw new Error('No Anthropic API key set. Enter your key in the "Anthropic API Key" section on the Event Setup tab.');
+            }
+            const resp = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01',
+                    'anthropic-dangerous-direct-browser-access': 'true'
+                },
+                body: JSON.stringify({
+                    model: 'claude-sonnet-4-20250514',
+                    max_tokens: 2000,
+                    messages: [{ role: 'user', content: prompt }]
+                })
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.error?.message || `API error ${resp.status}`);
+            }
+            const data = await resp.json();
+            const text = data.content.map(b => b.text || '').join('');
+            // Strip markdown code fences if present
+            return text.replace(/^```json\s*/m, '').replace(/\s*```$/m, '').trim();
+        }
+
+        function saveAnthropicKey() {
+            const key = document.getElementById('anthropicApiKey').value.trim();
+            if (key) {
+                localStorage.setItem('anthropicApiKey', key);
+            } else {
+                localStorage.removeItem('anthropicApiKey');
+            }
+            updateAnthropicKeyStatus();
+        }
+
+        function toggleApiKeyVisibility() {
+            const input = document.getElementById('anthropicApiKey');
+            input.type = input.type === 'password' ? 'text' : 'password';
+        }
+
+        function updateAnthropicKeyStatus() {
+            const statusEl = document.getElementById('anthropicKeyStatus');
+            if (!statusEl) return;
+            const key = localStorage.getItem('anthropicApiKey');
+            if (key && key.startsWith('sk-ant')) {
+                statusEl.innerHTML = '🤖 Course Search Ready - Anthropic API key configured';
+                statusEl.style.color = '#2ecc71';
+            } else {
+                statusEl.innerHTML = '🤖 Course Search Disabled - Add Anthropic API key in Event Setup';
+                statusEl.style.color = '#e67e22';
+            }
+        }
+
+        async function searchCourses(roundNum) {
+            const location = document.getElementById(`courseLocation${roundNum}`).value.trim();
+            const name = document.getElementById(`courseSearch${roundNum}`).value.trim();
+            if (!location && !name) { alert('Enter a location, a course name, or both'); return; }
+
+            const resultsEl = document.getElementById(`courseResults${roundNum}`);
+
+            // Build a natural prompt based on what the user provided
+            let prompt, statusMsg;
+            if (location && name) {
+                statusMsg = `Searching for "${name}" near ${location}...`;
+                prompt = `List up to 20 real golf courses that match the name "${name}" (full or partial match) ` +
+                    `near or in "${location}". Include exact matches and courses with similar names. ` +
+                    `Return ONLY a JSON array, no other text. Each element: ` +
+                    `{"name":"Full Course Name","city":"City","state":"ST","holes":18,"type":"Public"}. ` +
+                    `Order by how well the name matches first, then by proximity to the location.`;
+            } else if (name) {
+                statusMsg = `Searching for courses named "${name}"...`;
+                prompt = `List up to 20 real golf courses whose name contains or matches "${name}" (partial match is fine). ` +
+                    `Include courses from anywhere. Return ONLY a JSON array, no other text. Each element: ` +
+                    `{"name":"Full Course Name","city":"City","state":"ST","holes":18,"type":"Public"}. ` +
+                    `Order by how well the name matches.`;
+            } else {
+                statusMsg = `Searching for courses near ${location}...`;
+                prompt = `List the 20 closest real golf courses to "${location}", ordered by proximity. ` +
+                    `Include public, semi-private, and private courses. ` +
+                    `Return ONLY a JSON array, no other text. Each element: ` +
+                    `{"name":"Full Course Name","city":"City","state":"ST","holes":18,"type":"Public"}.`;
+            }
+
+            resultsEl.innerHTML = `<div style="color:#7f8c8d; padding:10px; text-align:center;">🔍 ${statusMsg}</div>`;
+
+            try {
+                const raw = await callClaude(prompt);
+
+                let courses;
+                try { courses = JSON.parse(raw); } catch(e) {
+                    resultsEl.innerHTML = `<div style="color:#e74c3c;padding:10px;">Could not parse course list. Try refining your search.</div>`;
+                    return;
+                }
+
+                if (!Array.isArray(courses) || courses.length === 0) {
+                    resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;">No courses found. Try a different name or location.</div>`;
+                    return;
+                }
+
+                let html = `<div style="max-height:280px;overflow-y:auto;border:1px solid #dee2e6;border-radius:6px;background:white;">`;
+                courses.forEach((c, idx) => {
+                    html += `
+                        <div onclick="selectCourse(${roundNum}, ${idx})" data-idx="${idx}"
+                            style="padding:10px 14px;border-bottom:1px solid #f0f0f0;cursor:pointer;
+                                   display:flex;justify-content:space-between;align-items:center;
+                                   transition:background 0.15s;"
+                            onmouseover="this.style.background='#f0f7ff'"
+                            onmouseout="this.style.background='white'">
+                            <div>
+                                <div style="font-weight:600;color:#2c3e50;">${c.name}</div>
+                                <div style="font-size:0.85em;color:#7f8c8d;">${c.city}, ${c.state} &bull; ${c.holes || 18} holes &bull; ${c.type || 'Golf Course'}</div>
+                            </div>
+                            <div style="color:#3498db;font-size:0.85em;white-space:nowrap;margin-left:10px;">Select →</div>
+                        </div>`;
+                });
+                html += `</div>`;
+
+                // Store courses list on the element for selectCourse to read
+                resultsEl.innerHTML = html;
+                resultsEl._courses = courses;
+
+            } catch(err) {
+                console.error(err);
+                resultsEl.innerHTML = `<div style="color:#e74c3c;padding:10px;">Search failed: ${err.message}</div>`;
+            }
+        }
+
+        async function selectCourse(roundNum, idx) {
+            const resultsEl = document.getElementById(`courseResults${roundNum}`);
+            const courses = resultsEl._courses;
+            if (!courses || !courses[idx]) return;
+            const course = courses[idx];
+
+            resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">⛳ Loading scorecard for ${course.name}...</div>`;
+
+            try {
+                const raw = await callClaude(
+                    `Provide the scorecard for "${course.name}" in ${course.city}, ${course.state}. ` +
+                    `Return ONLY a JSON object, no other text: ` +
+                    `{"name":"${course.name}","city":"${course.city}","state":"${course.state}", ` +
+                    `"holes":[` +
+                    `{"hole":1,"par":4,"yardageBlue":380,"yardageWhite":360,"yardageRed":320,"handicap":5},` +
+                    `...all 18 holes...` +
+                    `]}. ` +
+                    `Use real scorecard data if known. If exact data unavailable, use realistic typical values for that course type and difficulty. ` +
+                    `Include all 18 holes. yardageBlue=mens back tees, yardageWhite=mens middle tees, yardageRed=forward/womens tees.`
+                );
+
+                let scorecard;
+                try { scorecard = JSON.parse(raw); } catch(e) {
+                    // Try to extract JSON from response
+                    const match = raw.match(/\{[\s\S]*\}/);
+                    if (match) {
+                        try { scorecard = JSON.parse(match[0]); } catch(e2) {
+                            throw new Error('Could not parse scorecard data');
+                        }
+                    } else {
+                        throw new Error('No scorecard data returned');
+                    }
+                }
+
+                if (!scorecard.holes || scorecard.holes.length !== 18) {
+                    throw new Error('Incomplete scorecard (need all 18 holes)');
+                }
+
+                // Attach scorecard to the round
+                const roundIndex = roundNum - 1;
+                if (event.rounds && event.rounds[roundIndex]) {
+                    event.rounds[roundIndex].course = scorecard;
+                    saveCurrentEvent();
+                } else {
+                    // Store temporarily — will be picked up when event is created
+                    if (!window._pendingCourses) window._pendingCourses = {};
+                    window._pendingCourses[roundIndex] = scorecard;
+                }
+
+                resultsEl.innerHTML = '';
+                renderSelectedCourse(roundNum, scorecard);
+
+            } catch(err) {
+                console.error(err);
+                resultsEl.innerHTML = `<div style="color:#e74c3c;padding:10px;">Failed to load scorecard: ${err.message}</div>`;
+            }
+        }
+
+        function renderSelectedCourse(roundNum, course) {
+            const el = document.getElementById(`courseSelected${roundNum}`);
+            if (!el || !course) return;
+
+            const totalPar = course.holes.reduce((s,h) => s + h.par, 0);
+            const totalBlue = course.holes.reduce((s,h) => s + (h.yardageBlue||h.yardage||0), 0);
+            const totalWhite = course.holes.reduce((s,h) => s + (h.yardageWhite||0), 0);
+
+            let tableRows = '';
+            course.holes.forEach(h => {
+                tableRows += `<tr>
+                    <td style="font-weight:700;text-align:center;padding:4px 6px;background:#f8f9fa;">${h.hole}</td>
+                    <td style="text-align:center;padding:4px 6px;">${h.par}</td>
+                    <td style="text-align:center;padding:4px 6px;color:#2980b9;">${h.yardageBlue||h.yardage||'-'}</td>
+                    <td style="text-align:center;padding:4px 6px;color:#27ae60;">${h.yardageWhite||'-'}</td>
+                    <td style="text-align:center;padding:4px 6px;color:#e74c3c;">${h.yardageRed||'-'}</td>
+                    <td style="text-align:center;padding:4px 6px;color:#7f8c8d;">${h.handicap||'-'}</td>
+                </tr>`;
+            });
+
+            el.innerHTML = `
+                <div style="background:white;border:2px solid #2ecc71;border-radius:8px;padding:12px;margin-top:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <div>
+                            <div style="font-weight:700;color:#2c3e50;font-size:1.05em;">✅ ${course.name}</div>
+                            <div style="color:#7f8c8d;font-size:0.85em;">${course.city}, ${course.state} &bull; Par ${totalPar} &bull; ${totalBlue} yds (Blue)</div>
+                        </div>
+                        <button onclick="clearCourse(${roundNum})" style="background:none;border:1px solid #e0e0e0;border-radius:4px;padding:4px 10px;cursor:pointer;color:#7f8c8d;font-size:0.85em;">✕ Change</button>
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table style="width:100%;border-collapse:collapse;font-size:0.82em;">
+                            <thead>
+                                <tr style="background:#2c3e50;color:white;">
+                                    <th style="padding:5px 6px;text-align:center;">Hole</th>
+                                    <th style="padding:5px 6px;text-align:center;">Par</th>
+                                    <th style="padding:5px 6px;text-align:center;">Blue</th>
+                                    <th style="padding:5px 6px;text-align:center;">White</th>
+                                    <th style="padding:5px 6px;text-align:center;">Red</th>
+                                    <th style="padding:5px 6px;text-align:center;">HCP</th>
+                                </tr>
+                            </thead>
+                            <tbody>${tableRows}</tbody>
+                            <tfoot>
+                                <tr style="background:#f8f9fa;font-weight:700;">
+                                    <td style="text-align:center;padding:5px 6px;">TOTAL</td>
+                                    <td style="text-align:center;padding:5px 6px;">${totalPar}</td>
+                                    <td style="text-align:center;padding:5px 6px;color:#2980b9;">${totalBlue}</td>
+                                    <td style="text-align:center;padding:5px 6px;color:#27ae60;">${totalWhite||'-'}</td>
+                                    <td style="text-align:center;padding:5px 6px;"></td>
+                                    <td style="text-align:center;padding:5px 6px;"></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>`;
+        }
+
+        function clearCourse(roundNum) {
+            const roundIndex = roundNum - 1;
+            if (event.rounds && event.rounds[roundIndex]) {
+                event.rounds[roundIndex].course = null;
+                saveCurrentEvent();
+            }
+            document.getElementById(`courseSelected${roundNum}`).innerHTML = '';
+            document.getElementById(`courseResults${roundNum}`).innerHTML = '';
+            document.getElementById(`courseLocation${roundNum}`).value = '';
+            document.getElementById(`courseSearch${roundNum}`).value = '';
+        }
+
+        function getCourseForRound(roundIndex) {
+            if (event.rounds && event.rounds[roundIndex] && event.rounds[roundIndex].course) {
+                return event.rounds[roundIndex].course;
+            }
+            if (window._pendingCourses && window._pendingCourses[roundIndex]) {
+                return window._pendingCourses[roundIndex];
+            }
+            return null;
+        }
+
+                function saveEventSetup() {
             const name = document.getElementById('eventName').value.trim();
             if (!name) {
                 alert('Please enter an event name');
@@ -1265,6 +1574,7 @@
                     <button class="btn btn-secondary" onclick="exitLiveScoring()">← Back to Matches</button>
                     <div style="text-align: right;">
                         <div style="font-weight: 600; color: #2c3e50;">Round ${round.roundNumber} - ${round.format}${round.date ? ' (' + new Date(round.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ')' : ''}</div>
+                        ${(() => { const c = getCourseForRound(currentLiveRound); return c ? `<div style="font-size:0.85em;color:#27ae60;font-weight:600;">⛳ ${c.name}</div>` : ''; })()}
                         <div style="font-size: 0.9em; color: #7f8c8d;">${match.team0Players.join(' & ')} vs ${match.team1Players.join(' & ')}</div>
                     </div>
                 </div>
@@ -1282,12 +1592,26 @@
             // Hole navigation
             html += `
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <button class="btn btn-secondary" onclick="changeHole(-1)" ${currentLiveHole === 1 ? 'disabled' : ''} style="padding: 10px 20px;">
                             ← Previous
                         </button>
-                        <div style="font-size: 1.5em; font-weight: 700; color: #2c3e50;">
-                            Hole ${currentLiveHole}
+                        <div style="text-align: center;">
+                            <div style="font-size: 1.5em; font-weight: 700; color: #2c3e50;">
+                                Hole ${currentLiveHole}
+                            </div>
+                            ${(() => {
+                                const course = getCourseForRound(currentLiveRound);
+                                if (!course) return '';
+                                const holeData = course.holes[currentLiveHole - 1];
+                                if (!holeData) return '';
+                                const yds = holeData.yardageBlue || holeData.yardage || holeData.yardageWhite || '';
+                                return `<div style="display:flex;gap:10px;justify-content:center;margin-top:4px;">
+                                    <span style="background:#2c3e50;color:white;padding:2px 10px;border-radius:12px;font-size:0.85em;font-weight:700;">Par ${holeData.par}</span>
+                                    ${yds ? `<span style="background:#2980b9;color:white;padding:2px 10px;border-radius:12px;font-size:0.85em;">${yds} yds</span>` : ''}
+                                    ${holeData.handicap ? `<span style="background:#7f8c8d;color:white;padding:2px 10px;border-radius:12px;font-size:0.85em;">HCP ${holeData.handicap}</span>` : ''}
+                                </div>`;
+                            })()}
                         </div>
                         <button class="btn btn-secondary" onclick="changeHole(1)" ${currentLiveHole === 18 ? 'disabled' : ''} style="padding: 10px 20px;">
                             Next →
@@ -1801,10 +2125,16 @@
             for (let i = 1; i <= numRounds; i++) {
                 const format = document.getElementById(`format${i}`).value;
                 const date = document.getElementById(`date${i}`).value;
+                // Preserve course: check existing rounds, then pending (searched before event created)
+                const existingRound = event.rounds && event.rounds[i - 1];
+                const course = (existingRound && existingRound.course)
+                    || (window._pendingCourses && window._pendingCourses[i - 1])
+                    || null;
                 event.rounds.push({
                     roundNumber: i,
                     format: format,
                     date: date || null,
+                    course: course,
                     matches: []
                 });
             }
@@ -3241,13 +3571,14 @@
             
             updateRoundFormats();
             
-            // Set day formats and dates
+            // Set day formats, dates, and course selections
             setTimeout(() => {
                 event.rounds.forEach((round, i) => {
                     const formatEl = document.getElementById(`format${i + 1}`);
                     const dateEl = document.getElementById(`date${i + 1}`);
                     if (formatEl) formatEl.value = round.format;
                     if (dateEl && round.date) dateEl.value = round.date;
+                    if (round.course) renderSelectedCourse(i + 1, round.course);
                 });
             }, 100);
             
@@ -3417,6 +3748,10 @@
         renderBothRosters();
         refreshEventsList();
         updateSupabaseStatusIndicator();
+        // Restore saved API key
+        const _savedKey = localStorage.getItem('anthropicApiKey');
+        if (_savedKey) document.getElementById('anthropicApiKey').value = _savedKey;
+        updateAnthropicKeyStatus();
     </script>
 </body>
 </html>
