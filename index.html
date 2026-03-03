@@ -373,35 +373,39 @@
 
                 <!-- API Keys Section -->
                 <div style="background:#f8f9fa;padding:15px;border-radius:8px;border:2px solid #95a5a6;margin-bottom:20px;">
-                    <h3 style="margin:0 0 12px;color:#2c3e50;">🔑 API Keys</h3>
+                    <h3 style="margin:0 0 4px;color:#2c3e50;">🔑 API Keys</h3>
+                    <p style="font-size:0.8em;color:#7f8c8d;margin-bottom:12px;">Required for course search. Keys are saved in this browser only.</p>
 
-                    <div style="margin-bottom:12px;">
+                    <div style="margin-bottom:14px;">
                         <label style="font-size:0.85em;font-weight:700;color:#444;margin-bottom:5px;display:block;">
-                            Google Maps API Key <span style="color:#e74c3c;">*</span> <span style="font-weight:400;color:#7f8c8d;">— for course search</span>
+                            Anthropic API Key <span style="color:#e74c3c;">*</span> <span style="font-weight:400;color:#7f8c8d;">— for scorecard lookup</span>
                         </label>
-                        <div style="display:flex;gap:8px;">
-                            <input type="password" id="googleMapsApiKey" placeholder="AIza..."
-                                style="flex:1;padding:10px;border:2px solid #e0e0e0;border-radius:4px;font-family:monospace;font-size:0.9em;"
+                        <div style="display:flex;gap:8px;margin-bottom:5px;">
+                            <input type="password" id="anthropicApiKey" placeholder="sk-ant-api03-..."
+                                style="flex:1;padding:10px;border:2px solid #e0e0e0;border-radius:4px;font-family:monospace;font-size:0.85em;"
                                 oninput="saveApiKeys()">
-                            <button onclick="toggleKeyVisibility('googleMapsApiKey')" class="btn btn-secondary" style="padding:10px 14px;">👁</button>
+                            <button onclick="toggleKeyVisibility('anthropicApiKey')" class="btn btn-secondary" style="padding:10px 14px;" title="Show/hide">👁</button>
+                            <button onclick="testAnthropicKey()" class="btn btn-secondary" style="padding:10px 14px;white-space:nowrap;" title="Test key">✓ Test</button>
                         </div>
-                        <div style="margin-top:4px;font-size:0.78em;color:#7f8c8d;">
-                            Enable "Places API (New)" at <a href="https://console.cloud.google.com" target="_blank" style="color:#3498db;">console.cloud.google.com</a>
+                        <div id="anthropicKeyResult" style="font-size:0.8em;margin-top:3px;"></div>
+                        <div style="font-size:0.78em;color:#7f8c8d;">
+                            Get yours at <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:#3498db;">console.anthropic.com/settings/keys</a>
                         </div>
                     </div>
 
                     <div>
                         <label style="font-size:0.85em;font-weight:700;color:#444;margin-bottom:5px;display:block;">
-                            Anthropic API Key <span style="font-weight:400;color:#7f8c8d;">— for scorecard lookup</span>
+                            Google Maps API Key <span style="font-weight:400;color:#7f8c8d;">— for course search (optional)</span>
                         </label>
-                        <div style="display:flex;gap:8px;">
-                            <input type="password" id="anthropicApiKey" placeholder="sk-ant-api03-..."
-                                style="flex:1;padding:10px;border:2px solid #e0e0e0;border-radius:4px;font-family:monospace;font-size:0.9em;"
+                        <div style="display:flex;gap:8px;margin-bottom:5px;">
+                            <input type="password" id="googleMapsApiKey" placeholder="AIza..."
+                                style="flex:1;padding:10px;border:2px solid #e0e0e0;border-radius:4px;font-family:monospace;font-size:0.85em;"
                                 oninput="saveApiKeys()">
-                            <button onclick="toggleKeyVisibility('anthropicApiKey')" class="btn btn-secondary" style="padding:10px 14px;">👁</button>
+                            <button onclick="toggleKeyVisibility('googleMapsApiKey')" class="btn btn-secondary" style="padding:10px 14px;" title="Show/hide">👁</button>
                         </div>
-                        <div style="margin-top:4px;font-size:0.78em;color:#7f8c8d;">
-                            Get yours at <a href="https://console.anthropic.com" target="_blank" style="color:#3498db;">console.anthropic.com</a>
+                        <div style="font-size:0.78em;color:#7f8c8d;">
+                            Enable "Places API (New)" at <a href="https://console.cloud.google.com" target="_blank" style="color:#3498db;">console.cloud.google.com</a>.
+                            Without this key, course search uses Anthropic only.
                         </div>
                     </div>
                 </div>
@@ -731,19 +735,77 @@
             const gKey = localStorage.getItem('googleMapsApiKey');
             const aKey = localStorage.getItem('anthropicApiKey');
             const parts = [];
-            if (gKey) parts.push('📍 Google Maps ✓');
-            else parts.push('📍 Google Maps ✗');
+            if (gKey) parts.push('📍 Google ✓');
+            else parts.push('📍 Google —');
             if (aKey) parts.push('🤖 Anthropic ✓');
-            else parts.push('🤖 Anthropic ✗');
+            else parts.push('🤖 Anthropic —');
             statusEl.textContent = parts.join('  ·  ');
-            statusEl.style.color = (gKey && aKey) ? '#2ecc71' : '#e67e22';
+            statusEl.style.color = aKey ? '#2ecc71' : '#e67e22';
+        }
+
+        async function testAnthropicKey() {
+            const resultEl = document.getElementById('anthropicKeyResult');
+            const key = localStorage.getItem('anthropicApiKey') || document.getElementById('anthropicApiKey').value.trim();
+            if (!key) {
+                resultEl.style.color = '#e74c3c';
+                resultEl.textContent = '✗ Enter a key first';
+                return;
+            }
+            resultEl.style.color = '#7f8c8d';
+            resultEl.textContent = 'Testing...';
+            try {
+                const resp = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': key,
+                        'anthropic-version': '2023-06-01',
+                        'anthropic-dangerous-direct-browser-access': 'true'
+                    },
+                    body: JSON.stringify({
+                        model: 'claude-haiku-4-5-20251001',
+                        max_tokens: 10,
+                        messages: [{ role: 'user', content: 'Hi' }]
+                    })
+                });
+                if (resp.status === 401) {
+                    resultEl.style.color = '#e74c3c';
+                    resultEl.textContent = '✗ Invalid key — check for typos or generate a new one at console.anthropic.com/settings/keys';
+                    return;
+                }
+                if (resp.status === 403) {
+                    resultEl.style.color = '#e74c3c';
+                    resultEl.textContent = '✗ Key has no permissions — check your Anthropic account is active and has credits';
+                    return;
+                }
+                if (!resp.ok) {
+                    const body = await resp.json().catch(() => ({}));
+                    resultEl.style.color = '#e74c3c';
+                    resultEl.textContent = `✗ Error ${resp.status}: ${body.error?.message || 'Unknown error'}`;
+                    return;
+                }
+                // Save it if valid
+                localStorage.setItem('anthropicApiKey', key);
+                document.getElementById('anthropicApiKey').value = key;
+                updateApiKeyStatus();
+                resultEl.style.color = '#27ae60';
+                resultEl.textContent = '✓ Key is valid and working!';
+            } catch(err) {
+                if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+                    resultEl.style.color = '#e74c3c';
+                    resultEl.textContent = '✗ Network error — if running from a local file, host on a web server (e.g. Netlify) for API calls to work';
+                } else {
+                    resultEl.style.color = '#e74c3c';
+                    resultEl.textContent = `✗ ${err.message}`;
+                }
+            }
         }
 
         // ── Claude call (scorecard only) ──────────────────────────────────────────
 
         async function callClaude(prompt) {
             const apiKey = localStorage.getItem('anthropicApiKey') || '';
-            if (!apiKey) throw new Error('No Anthropic API key set — add it in Event Setup → API Keys.');
+            if (!apiKey) throw new Error('No Anthropic API key — add it in Event Setup → API Keys.');
             const resp = await fetch('https://api.anthropic.com/v1/messages', {
                 method: 'POST',
                 headers: {
@@ -759,8 +821,11 @@
                 })
             });
             if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}));
-                throw new Error(err.error?.message || `Anthropic API error ${resp.status}`);
+                const body = await resp.json().catch(() => ({}));
+                const msg = body.error?.message || `HTTP ${resp.status}`;
+                if (resp.status === 401) throw new Error(`Invalid Anthropic API key (401) — use the Test button in API Keys to verify it`);
+                if (resp.status === 403) throw new Error(`Anthropic key has no permissions (403) — check your account has credits`);
+                throw new Error(`Anthropic API error: ${msg}`);
             }
             const data = await resp.json();
             const text = data.content.map(b => b.text || '').join('');
