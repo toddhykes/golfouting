@@ -295,7 +295,7 @@
             <p>Multi-round match play score tracker</p>
             <p>Option for 'blowout bonus' if you want to punish unfair matchups</p>
             <div id="supabaseStatus" style="margin-top: 10px; font-size: 0.9em; opacity: 0.9;"></div>
-            <div id="anthropicKeyStatus" style="margin-top: 6px; font-size: 0.9em; opacity: 0.9;"></div>
+            <div id="apiKeyStatus" style="margin-top: 6px; font-size: 0.72em; opacity: 0.9;"></div>
         </div>
 
         <!-- Bottom Navigation (mobile) -->
@@ -371,20 +371,38 @@
                     </div>
                 </div>
 
-                <!-- Anthropic API Key Section -->
-                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border: 2px solid #95a5a6; margin-bottom: 20px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <h3 style="margin:0; color:#2c3e50;">🤖 Anthropic API Key</h3>
-                        <span style="font-size:0.8em; color:#7f8c8d;">Required for course search</span>
+                <!-- API Keys Section -->
+                <div style="background:#f8f9fa;padding:15px;border-radius:8px;border:2px solid #95a5a6;margin-bottom:20px;">
+                    <h3 style="margin:0 0 12px;color:#2c3e50;">🔑 API Keys</h3>
+
+                    <div style="margin-bottom:12px;">
+                        <label style="font-size:0.85em;font-weight:700;color:#444;margin-bottom:5px;display:block;">
+                            Google Maps API Key <span style="color:#e74c3c;">*</span> <span style="font-weight:400;color:#7f8c8d;">— for course search</span>
+                        </label>
+                        <div style="display:flex;gap:8px;">
+                            <input type="password" id="googleMapsApiKey" placeholder="AIza..."
+                                style="flex:1;padding:10px;border:2px solid #e0e0e0;border-radius:4px;font-family:monospace;font-size:0.9em;"
+                                oninput="saveApiKeys()">
+                            <button onclick="toggleKeyVisibility('googleMapsApiKey')" class="btn btn-secondary" style="padding:10px 14px;">👁</button>
+                        </div>
+                        <div style="margin-top:4px;font-size:0.78em;color:#7f8c8d;">
+                            Enable "Places API (New)" at <a href="https://console.cloud.google.com" target="_blank" style="color:#3498db;">console.cloud.google.com</a>
+                        </div>
                     </div>
-                    <div style="display:flex; gap:8px; align-items:center;">
-                        <input type="password" id="anthropicApiKey" placeholder="sk-ant-api03-..."
-                            style="flex:1; padding:10px; border:2px solid #e0e0e0; border-radius:4px; font-family:monospace; font-size:0.9em;"
-                            oninput="saveAnthropicKey()">
-                        <button onclick="toggleApiKeyVisibility()" class="btn btn-secondary" style="padding:10px 14px;" title="Show/hide key">👁</button>
-                    </div>
-                    <div style="margin-top:6px; font-size:0.8em; color:#7f8c8d;">
-                        Your key is stored locally in this browser only. Get yours at <a href="https://console.anthropic.com" target="_blank" style="color:#3498db;">console.anthropic.com</a>
+
+                    <div>
+                        <label style="font-size:0.85em;font-weight:700;color:#444;margin-bottom:5px;display:block;">
+                            Anthropic API Key <span style="font-weight:400;color:#7f8c8d;">— for scorecard lookup</span>
+                        </label>
+                        <div style="display:flex;gap:8px;">
+                            <input type="password" id="anthropicApiKey" placeholder="sk-ant-api03-..."
+                                style="flex:1;padding:10px;border:2px solid #e0e0e0;border-radius:4px;font-family:monospace;font-size:0.9em;"
+                                oninput="saveApiKeys()">
+                            <button onclick="toggleKeyVisibility('anthropicApiKey')" class="btn btn-secondary" style="padding:10px 14px;">👁</button>
+                        </div>
+                        <div style="margin-top:4px;font-size:0.78em;color:#7f8c8d;">
+                            Get yours at <a href="https://console.anthropic.com" target="_blank" style="color:#3498db;">console.anthropic.com</a>
+                        </div>
                     </div>
                 </div>
 
@@ -670,20 +688,17 @@
                     <div style="border-top: 1px solid #dee2e6; padding-top: 15px;">
                         <label style="display: block; font-weight: 600; margin-bottom: 8px; color: #2c3e50;">⛳ Golf Course (Optional)</label>
                         <div id="courseWidget${i}">
-                            <div style="display:grid; grid-template-columns:1fr 1fr auto; gap:8px; align-items:center;">
-                                <input type="text" id="courseLocation${i}" placeholder="City, State or ZIP (optional)"
-                                    style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 4px;"
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <input type="text" id="courseSearch${i}" placeholder="e.g. Pebble Beach, Torrey Pines, or Augusta GA golf"
+                                    style="flex:1;padding:10px;border:2px solid #e0e0e0;border-radius:4px;"
                                     onkeypress="if(event.key==='Enter') searchCourses(${i})">
-                                <input type="text" id="courseSearch${i}" placeholder="Course name (full or partial)"
-                                    style="padding: 10px; border: 2px solid #e0e0e0; border-radius: 4px;"
-                                    onkeypress="if(event.key==='Enter') searchCourses(${i})">
-                                <button class="btn btn-secondary" onclick="searchCourses(${i})" style="padding: 10px 16px; white-space: nowrap;">
+                                <button class="btn btn-secondary" onclick="searchCourses(${i})" style="padding:10px 16px;white-space:nowrap;">
                                     🔍 Search
                                 </button>
                             </div>
-                            <div style="font-size:0.8em;color:#7f8c8d;margin-top:5px;">Enter a location, a course name, or both</div>
-                            <div id="courseResults${i}" style="margin-top: 10px;"></div>
-                            <div id="courseSelected${i}" style="margin-top: 10px;"></div>
+                            <div style="font-size:0.78em;color:#7f8c8d;margin-top:4px;">Powered by Google Maps — searches real course names and locations</div>
+                            <div id="courseResults${i}" style="margin-top:10px;"></div>
+                            <div id="courseSelected${i}" style="margin-top:10px;"></div>
                         </div>
                     </div>
                 `;
@@ -695,11 +710,40 @@
         // GOLF COURSE SEARCH & SCORECARD
         // ═══════════════════════════════════════════════════════
 
+        // ── API Key helpers ──────────────────────────────────────────────────────
+
+        function saveApiKeys() {
+            const gKey = document.getElementById('googleMapsApiKey').value.trim();
+            const aKey = document.getElementById('anthropicApiKey').value.trim();
+            gKey ? localStorage.setItem('googleMapsApiKey', gKey) : localStorage.removeItem('googleMapsApiKey');
+            aKey ? localStorage.setItem('anthropicApiKey', aKey) : localStorage.removeItem('anthropicApiKey');
+            updateApiKeyStatus();
+        }
+
+        function toggleKeyVisibility(inputId) {
+            const el = document.getElementById(inputId);
+            el.type = el.type === 'password' ? 'text' : 'password';
+        }
+
+        function updateApiKeyStatus() {
+            const statusEl = document.getElementById('apiKeyStatus');
+            if (!statusEl) return;
+            const gKey = localStorage.getItem('googleMapsApiKey');
+            const aKey = localStorage.getItem('anthropicApiKey');
+            const parts = [];
+            if (gKey) parts.push('📍 Google Maps ✓');
+            else parts.push('📍 Google Maps ✗');
+            if (aKey) parts.push('🤖 Anthropic ✓');
+            else parts.push('🤖 Anthropic ✗');
+            statusEl.textContent = parts.join('  ·  ');
+            statusEl.style.color = (gKey && aKey) ? '#2ecc71' : '#e67e22';
+        }
+
+        // ── Claude call (scorecard only) ──────────────────────────────────────────
+
         async function callClaude(prompt) {
             const apiKey = localStorage.getItem('anthropicApiKey') || '';
-            if (!apiKey) {
-                throw new Error('No Anthropic API key set. Enter your key in the "Anthropic API Key" section on the Event Setup tab.');
-            }
+            if (!apiKey) throw new Error('No Anthropic API key set — add it in Event Setup → API Keys.');
             const resp = await fetch('https://api.anthropic.com/v1/messages', {
                 method: 'POST',
                 headers: {
@@ -716,107 +760,75 @@
             });
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
-                throw new Error(err.error?.message || `API error ${resp.status}`);
+                throw new Error(err.error?.message || `Anthropic API error ${resp.status}`);
             }
             const data = await resp.json();
             const text = data.content.map(b => b.text || '').join('');
-            // Strip markdown code fences if present
             return text.replace(/^```json\s*/m, '').replace(/\s*```$/m, '').trim();
         }
 
-        function saveAnthropicKey() {
-            const key = document.getElementById('anthropicApiKey').value.trim();
-            if (key) {
-                localStorage.setItem('anthropicApiKey', key);
-            } else {
-                localStorage.removeItem('anthropicApiKey');
-            }
-            updateAnthropicKeyStatus();
-        }
-
-        function toggleApiKeyVisibility() {
-            const input = document.getElementById('anthropicApiKey');
-            input.type = input.type === 'password' ? 'text' : 'password';
-        }
-
-        function updateAnthropicKeyStatus() {
-            const statusEl = document.getElementById('anthropicKeyStatus');
-            if (!statusEl) return;
-            const key = localStorage.getItem('anthropicApiKey');
-            if (key && key.startsWith('sk-ant')) {
-                statusEl.innerHTML = '🤖 Course Search Ready - Anthropic API key configured';
-                statusEl.style.color = '#2ecc71';
-            } else {
-                statusEl.innerHTML = '🤖 Course Search Disabled - Add Anthropic API key in Event Setup';
-                statusEl.style.color = '#e67e22';
-            }
-        }
+        // ── Google Places course search ───────────────────────────────────────────
 
         async function searchCourses(roundNum) {
-            const location = document.getElementById(`courseLocation${roundNum}`).value.trim();
-            const name = document.getElementById(`courseSearch${roundNum}`).value.trim();
-            if (!location && !name) { alert('Enter a location, a course name, or both'); return; }
+            const query = document.getElementById(`courseSearch${roundNum}`).value.trim();
+            if (!query) { alert('Enter a course name, city, or both'); return; }
 
-            const resultsEl = document.getElementById(`courseResults${roundNum}`);
-
-            // Build a natural prompt based on what the user provided
-            let prompt, statusMsg;
-            if (location && name) {
-                statusMsg = `Searching for "${name}" near ${location}...`;
-                prompt = `List up to 20 real golf courses that match the name "${name}" (full or partial match) ` +
-                    `near or in "${location}". Include exact matches and courses with similar names. ` +
-                    `Return ONLY a JSON array, no other text. Each element: ` +
-                    `{"name":"Full Course Name","city":"City","state":"ST","holes":18,"type":"Public"}. ` +
-                    `Order by how well the name matches first, then by proximity to the location.`;
-            } else if (name) {
-                statusMsg = `Searching for courses named "${name}"...`;
-                prompt = `List up to 20 real golf courses whose name contains or matches "${name}" (partial match is fine). ` +
-                    `Include courses from anywhere. Return ONLY a JSON array, no other text. Each element: ` +
-                    `{"name":"Full Course Name","city":"City","state":"ST","holes":18,"type":"Public"}. ` +
-                    `Order by how well the name matches.`;
-            } else {
-                statusMsg = `Searching for courses near ${location}...`;
-                prompt = `List the 20 closest real golf courses to "${location}", ordered by proximity. ` +
-                    `Include public, semi-private, and private courses. ` +
-                    `Return ONLY a JSON array, no other text. Each element: ` +
-                    `{"name":"Full Course Name","city":"City","state":"ST","holes":18,"type":"Public"}.`;
+            const gKey = localStorage.getItem('googleMapsApiKey');
+            if (!gKey) {
+                alert('Google Maps API key required for course search — add it in Event Setup → API Keys.');
+                return;
             }
 
-            resultsEl.innerHTML = `<div style="color:#7f8c8d; padding:10px; text-align:center;">🔍 ${statusMsg}</div>`;
+            const resultsEl = document.getElementById(`courseResults${roundNum}`);
+            resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">🔍 Searching Google Maps for "${query}"...</div>`;
 
             try {
-                const raw = await callClaude(prompt);
+                // Google Places Text Search — finds real courses by name/location
+                // "golf course" appended to bias results toward golf
+                const searchQuery = query.toLowerCase().includes('golf') ? query : query + ' golf course';
+                const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(searchQuery)}&type=golf_course&key=${gKey}`;
 
-                let courses;
-                try { courses = JSON.parse(raw); } catch(e) {
-                    resultsEl.innerHTML = `<div style="color:#e74c3c;padding:10px;">Could not parse course list. Try refining your search.</div>`;
+                // Must go through a CORS proxy since Places API doesn't allow direct browser calls
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+                const resp = await fetch(proxyUrl);
+                if (!resp.ok) throw new Error(`Places API error ${resp.status}`);
+                const data = await resp.json();
+
+                if (data.status === 'REQUEST_DENIED') {
+                    throw new Error(`Google API error: ${data.error_message || 'REQUEST_DENIED — check your API key and that Places API is enabled'}`);
+                }
+                if (data.status === 'ZERO_RESULTS' || !data.results || data.results.length === 0) {
+                    resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">No courses found for "${query}". Try adding a city or state.</div>`;
                     return;
                 }
 
-                if (!Array.isArray(courses) || courses.length === 0) {
-                    resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;">No courses found. Try a different name or location.</div>`;
-                    return;
-                }
+                const courses = data.results.slice(0, 20).map(p => ({
+                    name: p.name,
+                    address: p.formatted_address,
+                    city: p.formatted_address.split(',')[1]?.trim() || '',
+                    state: p.formatted_address.split(',')[2]?.trim().split(' ')[1] || '',
+                    placeId: p.place_id,
+                    rating: p.rating
+                }));
 
-                let html = `<div style="max-height:280px;overflow-y:auto;border:1px solid #dee2e6;border-radius:6px;background:white;">`;
+                let html = `<div style="max-height:300px;overflow-y:auto;border:1px solid #dee2e6;border-radius:8px;background:white;">`;
                 courses.forEach((c, idx) => {
                     html += `
-                        <div onclick="selectCourse(${roundNum}, ${idx})" data-idx="${idx}"
-                            style="padding:10px 14px;border-bottom:1px solid #f0f0f0;cursor:pointer;
-                                   display:flex;justify-content:space-between;align-items:center;
-                                   transition:background 0.15s;"
+                        <div onclick="selectCourse(${roundNum}, ${idx})"
+                            style="padding:11px 14px;border-bottom:1px solid #f0f0f0;cursor:pointer;
+                                   display:flex;justify-content:space-between;align-items:center;gap:10px;
+                                   -webkit-tap-highlight-color:transparent;"
                             onmouseover="this.style.background='#f0f7ff'"
                             onmouseout="this.style.background='white'">
-                            <div>
-                                <div style="font-weight:600;color:#2c3e50;">${c.name}</div>
-                                <div style="font-size:0.85em;color:#7f8c8d;">${c.city}, ${c.state} &bull; ${c.holes || 18} holes &bull; ${c.type || 'Golf Course'}</div>
+                            <div style="min-width:0;">
+                                <div style="font-weight:700;color:#2c3e50;">${c.name}</div>
+                                <div style="font-size:0.82em;color:#7f8c8d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${c.address}</div>
+                                ${c.rating ? `<div style="font-size:0.78em;color:#f39c12;">★ ${c.rating}</div>` : ''}
                             </div>
-                            <div style="color:#3498db;font-size:0.85em;white-space:nowrap;margin-left:10px;">Select →</div>
+                            <div style="color:#3498db;font-size:1.1em;flex-shrink:0;">→</div>
                         </div>`;
                 });
                 html += `</div>`;
-
-                // Store courses list on the element for selectCourse to read
                 resultsEl.innerHTML = html;
                 resultsEl._courses = courses;
 
@@ -835,42 +847,35 @@
             resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">⛳ Loading scorecard for ${course.name}...</div>`;
 
             try {
+                // Use Claude with the exact name + address from Google for an accurate scorecard
                 const raw = await callClaude(
-                    `Provide the scorecard for "${course.name}" in ${course.city}, ${course.state}. ` +
-                    `Return ONLY a JSON object, no other text: ` +
-                    `{"name":"${course.name}","city":"${course.city}","state":"${course.state}", ` +
-                    `"holes":[` +
-                    `{"hole":1,"par":4,"yardageBlue":380,"yardageWhite":360,"yardageRed":320,"handicap":5},` +
-                    `...all 18 holes...` +
-                    `]}. ` +
-                    `Use real scorecard data if known. If exact data unavailable, use realistic typical values for that course type and difficulty. ` +
-                    `Include all 18 holes. yardageBlue=mens back tees, yardageWhite=mens middle tees, yardageRed=forward/womens tees.`
+                    `Provide the complete 18-hole scorecard for "${course.name}" located at "${course.address}". ` +
+                    `Return ONLY valid JSON, no other text: ` +
+                    `{"name":"${course.name}","city":"${course.city}","state":"${course.state}","address":"${course.address}",` +
+                    `"holes":[{"hole":1,"par":4,"yardageBlue":380,"yardageWhite":360,"yardageRed":320,"handicap":5},...all 18 holes]}. ` +
+                    `Use the real scorecard if you know it. If not, use realistic values for a course of this type and region. ` +
+                    `yardageBlue=back tees, yardageWhite=middle tees, yardageRed=forward tees. Include all 18 holes.`
                 );
 
                 let scorecard;
-                try { scorecard = JSON.parse(raw); } catch(e) {
-                    // Try to extract JSON from response
+                try {
+                    scorecard = JSON.parse(raw);
+                } catch(e) {
                     const match = raw.match(/\{[\s\S]*\}/);
-                    if (match) {
-                        try { scorecard = JSON.parse(match[0]); } catch(e2) {
-                            throw new Error('Could not parse scorecard data');
-                        }
-                    } else {
-                        throw new Error('No scorecard data returned');
-                    }
+                    if (match) scorecard = JSON.parse(match[0]);
+                    else throw new Error('Could not parse scorecard response');
                 }
 
-                if (!scorecard.holes || scorecard.holes.length !== 18) {
-                    throw new Error('Incomplete scorecard (need all 18 holes)');
+                if (!scorecard.holes || scorecard.holes.length < 18) {
+                    throw new Error(`Only got ${scorecard.holes?.length || 0} holes — need 18`);
                 }
 
-                // Attach scorecard to the round
+                // Attach to round
                 const roundIndex = roundNum - 1;
                 if (event.rounds && event.rounds[roundIndex]) {
                     event.rounds[roundIndex].course = scorecard;
                     saveCurrentEvent();
                 } else {
-                    // Store temporarily — will be picked up when event is created
                     if (!window._pendingCourses) window._pendingCourses = {};
                     window._pendingCourses[roundIndex] = scorecard;
                 }
@@ -949,7 +954,6 @@
             }
             document.getElementById(`courseSelected${roundNum}`).innerHTML = '';
             document.getElementById(`courseResults${roundNum}`).innerHTML = '';
-            document.getElementById(`courseLocation${roundNum}`).value = '';
             document.getElementById(`courseSearch${roundNum}`).value = '';
         }
 
@@ -1000,7 +1004,10 @@
             document.getElementById(inputId).value = '';
             document.getElementById(phoneId).value = '';
             renderRoster(teamIndex);
-            if (event.name) saveCurrentEvent();
+            if (event.name) {
+                saveCurrentEvent();
+                syncRosterToSupabase();
+            }
         }
 
         function removePlayer(teamIndex, playerIndex) {
@@ -1011,7 +1018,10 @@
                 teamRosters[teamIndex].captain--;
             }
             renderRoster(teamIndex);
-            if (event.name) saveCurrentEvent();
+            if (event.name) {
+                saveCurrentEvent();
+                syncRosterToSupabase();
+            }
         }
 
         function setCaptain(teamIndex, playerIndex) {
@@ -2794,6 +2804,88 @@
             return getSavedEvents();
         }
 
+        // Sync the current teamRosters to Supabase players + team_players tables.
+        // Called after addPlayer / removePlayer so the DB stays in sync with local state.
+        async function syncRosterToSupabase() {
+            if (!supabaseClient || !isSupabaseEnabled) return;
+            if (!event.teams || event.teams.length < 2) return;  // event not created yet
+
+            for (let teamIdx = 0; teamIdx < 2; teamIdx++) {
+                const team = event.teams[teamIdx];
+                const roster = teamRosters[teamIdx];
+                if (!team || !team.id || team.id.toString().startsWith('local_')) continue;
+
+                const dbTeamId = team.id;
+                const currentNames = roster.players.map(p => p.name);
+
+                try {
+                    // Step A: Get all existing team_players rows for this team
+                    const { data: existingRows } = await supabaseClient
+                        .from('team_players')
+                        .select('player_id, players(player_name)')
+                        .eq('team_id', dbTeamId);
+
+                    const existingNames = (existingRows || [])
+                        .map(r => r.players?.player_name)
+                        .filter(Boolean);
+
+                    // Step B: Delete rows for players no longer on the roster
+                    const toRemove = existingNames.filter(n => !currentNames.includes(n));
+                    for (const name of toRemove) {
+                        const { data: p } = await supabaseClient
+                            .from('players')
+                            .select('player_id, id')
+                            .eq('player_name', name)
+                            .single();
+                        if (p) {
+                            const pid = p.player_id || p.id;
+                            await supabaseClient
+                                .from('team_players')
+                                .delete()
+                                .eq('team_id', dbTeamId)
+                                .eq('player_id', pid);
+                            console.log(`Removed ${name} from team_players`);
+                        }
+                    }
+
+                    // Step C: Upsert each current player
+                    for (const player of roster.players) {
+                        // Upsert into players table (no duplicates)
+                        const { data: p, error: pErr } = await supabaseClient
+                            .from('players')
+                            .upsert({ player_name: player.name }, {
+                                onConflict: 'player_name',
+                                ignoreDuplicates: false
+                            })
+                            .select('player_id, id')
+                            .single();
+
+                        if (pErr || !p) {
+                            console.error(`Could not upsert player ${player.name}:`, pErr);
+                            continue;
+                        }
+
+                        const pid = p.player_id || p.id;
+                        const captainName = roster.captain !== null
+                            ? roster.players[roster.captain]?.name : null;
+
+                        // Upsert into team_players
+                        await supabaseClient
+                            .from('team_players')
+                            .upsert({
+                                team_id: dbTeamId,
+                                player_id: pid,
+                                is_captain: player.name === captainName
+                            }, { onConflict: 'team_id,player_id', ignoreDuplicates: false });
+                    }
+
+                    console.log(`Roster synced for team ${team.name}`);
+                } catch (err) {
+                    console.error(`Roster sync error for team ${teamIdx}:`, err);
+                }
+            }
+        }
+
         async function saveCurrentEvent() {
             if (!event.name) return;
             
@@ -3187,30 +3279,20 @@
                             
                             for (const playerName in matchScores) {
                                 try {
-                                    // Get player ID - select all columns to avoid column name issues
-                                    let playerResult = await supabaseClient
+                                    // Upsert player by name — prevents duplicates on repeated saves
+                                    const { data: player, error: playerError } = await supabaseClient
                                         .from('players')
+                                        .upsert({ player_name: playerName }, {
+                                            onConflict: 'player_name',
+                                            ignoreDuplicates: false
+                                        })
                                         .select('*')
-                                        .eq('player_name', playerName)
                                         .single();
                                     
-                                    // If player doesn't exist, create them first
-                                    if (playerResult.error) {
-                                        console.log(`Creating player: ${playerName}`);
-                                        const insertResult = await supabaseClient
-                                            .from('players')
-                                            .insert({ player_name: playerName })
-                                            .select('*')
-                                            .single();
-                                        
-                                        if (insertResult.error) {
-                                            console.error(`Failed to create player ${playerName}:`, insertResult.error);
-                                            continue;
-                                        }
-                                        playerResult = insertResult;
+                                    if (playerError) {
+                                        console.error(`Failed to upsert player ${playerName}:`, playerError);
+                                        continue;
                                     }
-                                    
-                                    const player = playerResult.data;
                                     if (!player) continue;
                                     
                                     // Try common column names for player ID
@@ -3582,10 +3664,12 @@
         renderBothRosters();
         refreshEventsList();
         updateSupabaseStatusIndicator();
-        // Restore saved API key
-        const _savedKey = localStorage.getItem('anthropicApiKey');
-        if (_savedKey) document.getElementById('anthropicApiKey').value = _savedKey;
-        updateAnthropicKeyStatus();
+        // Restore saved API keys
+        const _savedGKey = localStorage.getItem('googleMapsApiKey');
+        const _savedAKey = localStorage.getItem('anthropicApiKey');
+        if (_savedGKey) document.getElementById('googleMapsApiKey').value = _savedGKey;
+        if (_savedAKey) document.getElementById('anthropicApiKey').value = _savedAKey;
+        updateApiKeyStatus();
     </script>
 </body>
 </html>
