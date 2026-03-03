@@ -1,8 +1,0 @@
-Supabase password
-yj6lcaThkaI7k2zs
-
-claude-key-2
-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
-
-google maps API
-AIzaSyCMF_ZlBgoBLWo-Zv8ocQUSVlvwx4ayFwo
