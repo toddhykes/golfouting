@@ -393,20 +393,11 @@
                         </div>
                     </div>
 
-                    <div>
-                        <label style="font-size:0.85em;font-weight:700;color:#444;margin-bottom:5px;display:block;">
-                            Google Maps API Key <span style="font-weight:400;color:#7f8c8d;">— for course search (optional)</span>
-                        </label>
-                        <div style="display:flex;gap:8px;margin-bottom:5px;">
-                            <input type="password" id="googleMapsApiKey" placeholder="AIza..."
-                                style="flex:1;padding:10px;border:2px solid #e0e0e0;border-radius:4px;font-family:monospace;font-size:0.85em;"
-                                oninput="saveApiKeys()">
-                            <button onclick="toggleKeyVisibility('googleMapsApiKey')" class="btn btn-secondary" style="padding:10px 14px;" title="Show/hide">👁</button>
-                        </div>
-                        <div style="font-size:0.78em;color:#7f8c8d;">
-                            Enable "Places API (New)" at <a href="https://console.cloud.google.com" target="_blank" style="color:#3498db;">console.cloud.google.com</a>.
-                            Without this key, course search uses Anthropic only.
-                        </div>
+                    <div style="background:#e8f4fd;border-radius:6px;padding:10px;font-size:0.82em;color:#2c3e50;">
+                        <strong>📍 Google Maps</strong> — set <code>GOOGLE_MAPS_API_KEY</code> in
+                        <a href="https://app.netlify.com" target="_blank" style="color:#3498db;">Netlify → Site Settings → Environment Variables</a>.
+                        Enable "Places API (New)" in <a href="https://console.cloud.google.com" target="_blank" style="color:#3498db;">Google Cloud Console</a>.
+                        The key stays server-side and is never exposed in the browser.
                     </div>
                 </div>
 
@@ -717,9 +708,7 @@
         // ── API Key helpers ──────────────────────────────────────────────────────
 
         function saveApiKeys() {
-            const gKey = document.getElementById('googleMapsApiKey').value.trim();
             const aKey = document.getElementById('anthropicApiKey').value.trim();
-            gKey ? localStorage.setItem('googleMapsApiKey', gKey) : localStorage.removeItem('googleMapsApiKey');
             aKey ? localStorage.setItem('anthropicApiKey', aKey) : localStorage.removeItem('anthropicApiKey');
             updateApiKeyStatus();
         }
@@ -732,14 +721,8 @@
         function updateApiKeyStatus() {
             const statusEl = document.getElementById('apiKeyStatus');
             if (!statusEl) return;
-            const gKey = localStorage.getItem('googleMapsApiKey');
             const aKey = localStorage.getItem('anthropicApiKey');
-            const parts = [];
-            if (gKey) parts.push('📍 Google ✓');
-            else parts.push('📍 Google —');
-            if (aKey) parts.push('🤖 Anthropic ✓');
-            else parts.push('🤖 Anthropic —');
-            statusEl.textContent = parts.join('  ·  ');
+            statusEl.textContent = aKey ? '🤖 Anthropic API key saved' : '🤖 Anthropic API key not set — add in Event Setup';
             statusEl.style.color = aKey ? '#2ecc71' : '#e67e22';
         }
 
@@ -838,29 +821,21 @@
             const query = document.getElementById(`courseSearch${roundNum}`).value.trim();
             if (!query) { alert('Enter a course name, city, or both'); return; }
 
-            const gKey = localStorage.getItem('googleMapsApiKey');
-            if (!gKey) {
-                alert('Google Maps API key required for course search — add it in Event Setup → API Keys.');
-                return;
-            }
-
             const resultsEl = document.getElementById(`courseResults${roundNum}`);
             resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">🔍 Searching Google Maps for "${query}"...</div>`;
 
             try {
-                // Google Places Text Search — finds real courses by name/location
-                // "golf course" appended to bias results toward golf
+                // Google Places Text Search via Netlify function (server-side, no CORS issues)
                 const searchQuery = query.toLowerCase().includes('golf') ? query : query + ' golf course';
-                const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(searchQuery)}&type=golf_course&key=${gKey}`;
-
-                // Must go through a CORS proxy since Places API doesn't allow direct browser calls
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-                const resp = await fetch(proxyUrl);
-                if (!resp.ok) throw new Error(`Places API error ${resp.status}`);
+                const resp = await fetch(`/.netlify/functions/places?query=${encodeURIComponent(searchQuery)}`);
+                if (!resp.ok) throw new Error(`Search service error ${resp.status} — make sure the site is deployed to Netlify`);
                 const data = await resp.json();
 
+                if (data.error) {
+                    throw new Error(data.error);
+                }
                 if (data.status === 'REQUEST_DENIED') {
-                    throw new Error(`Google API error: ${data.error_message || 'REQUEST_DENIED — check your API key and that Places API is enabled'}`);
+                    throw new Error(`Google API denied: ${data.error_message || 'Check GOOGLE_MAPS_API_KEY is set in Netlify environment variables'}`);
                 }
                 if (data.status === 'ZERO_RESULTS' || !data.results || data.results.length === 0) {
                     resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">No courses found for "${query}". Try adding a city or state.</div>`;
@@ -3730,9 +3705,7 @@
         refreshEventsList();
         updateSupabaseStatusIndicator();
         // Restore saved API keys
-        const _savedGKey = localStorage.getItem('googleMapsApiKey');
         const _savedAKey = localStorage.getItem('anthropicApiKey');
-        if (_savedGKey) document.getElementById('googleMapsApiKey').value = _savedGKey;
         if (_savedAKey) document.getElementById('anthropicApiKey').value = _savedAKey;
         updateApiKeyStatus();
     </script>
