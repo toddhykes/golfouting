@@ -295,7 +295,6 @@
             <p>Multi-round match play score tracker</p>
             <p>Option for 'blowout bonus' if you want to punish unfair matchups</p>
             <div id="supabaseStatus" style="margin-top: 10px; font-size: 0.9em; opacity: 0.9;"></div>
-            <div id="apiKeyStatus" style="margin-top: 6px; font-size: 0.72em; opacity: 0.9;"></div>
         </div>
 
         <!-- Bottom Navigation (mobile) -->
@@ -368,19 +367,6 @@
                                 title="Clear old local events (keeps Supabase events)">
                             🗑️ Clear Local
                         </button>
-                    </div>
-                </div>
-
-                <!-- API Keys Section -->
-                <div style="background:#f8f9fa;padding:15px;border-radius:8px;border:2px solid #95a5a6;margin-bottom:20px;">
-                    <h3 style="margin:0 0 4px;color:#2c3e50;">🔑 API Keys</h3>
-                    <p style="font-size:0.8em;color:#7f8c8d;margin-bottom:12px;">Required for course search. Keys are saved in this browser only.</p>
-
-                    <div style="background:#e8f4fd;border-radius:6px;padding:10px;font-size:0.82em;color:#2c3e50;">
-                        <strong>📍 Google Maps</strong> — set <code>GOOGLE_MAPS_API_KEY</code> in
-                        <a href="https://app.netlify.com" target="_blank" style="color:#3498db;">Netlify → Site Settings → Environment Variables</a>.
-                        Enable "Places API (New)" in <a href="https://console.cloud.google.com" target="_blank" style="color:#3498db;">Google Cloud Console</a>.
-                        The key stays server-side and is never exposed in the browser.
                     </div>
                 </div>
 
@@ -690,9 +676,7 @@
 
         // ── API Key helpers ──────────────────────────────────────────────────────
 
-        function updateApiKeyStatus() {
-            // Keys are server-side Netlify env vars — nothing to manage in browser
-        }
+
 
         // ── Claude call via Netlify function (key stays server-side) ───────────────
 
@@ -3600,7 +3584,7 @@
         refreshEventsList();
         updateSupabaseStatusIndicator();
         // Restore saved API keys
-        updateApiKeyStatus();
+
     </script>
 </body>
 </html>
