@@ -609,6 +609,10 @@
                     renderScoring();
                 }
             }
+            if (tabName === 'matchups' && event.teams && event.teams.length >= 2) {
+                syncEventTeamsFromRosters();
+                renderMatchups();
+            }
         }
 
         function toggleMoreMenu() {
@@ -698,7 +702,7 @@
 
         async function searchCourses(roundNum) {
             const query = document.getElementById(`courseSearch${roundNum}`).value.trim();
-            if (!query) { alert('Enter a course name, city, or both'); return; }
+            if (!query) { showToast('Enter a course name, city, or both', 'warning'); return; }
 
             const resultsEl = document.getElementById(`courseResults${roundNum}`);
             resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">🔍 Searching Google Maps for "${query}"...</div>`;
@@ -889,7 +893,7 @@
                 function saveEventSetup() {
             const name = document.getElementById('eventName').value.trim();
             if (!name) {
-                alert('Please enter an event name');
+                showToast('Please enter an event name', 'warning');
                 return;
             }
             
@@ -911,7 +915,7 @@
             const playerPhone = document.getElementById(phoneId).value.trim();
             
             if (!playerName) {
-                alert('Please enter a player name');
+                showToast('Please enter a player name', 'warning');
                 return;
             }
             
@@ -924,7 +928,9 @@
             document.getElementById(phoneId).value = '';
             renderRoster(teamIndex);
             if (event.name) {
-                saveCurrentEvent();
+                syncEventTeamsFromRosters();
+                renderMatchups();
+                saveCurrentEvent({ blobOnly: true });
                 syncRosterToSupabase();
             }
         }
@@ -938,7 +944,9 @@
             }
             renderRoster(teamIndex);
             if (event.name) {
-                saveCurrentEvent();
+                syncEventTeamsFromRosters();
+                renderMatchups();
+                saveCurrentEvent({ blobOnly: true });
                 syncRosterToSupabase();
             }
         }
@@ -946,7 +954,21 @@
         function setCaptain(teamIndex, playerIndex) {
             teamRosters[teamIndex].captain = playerIndex;
             renderRoster(teamIndex);
-            if (event.name) saveCurrentEvent();
+            if (event.name) {
+                syncEventTeamsFromRosters();
+                saveCurrentEvent({ blobOnly: true });
+            }
+        }
+
+        // Keep event.teams in sync with teamRosters after any roster change
+        function syncEventTeamsFromRosters() {
+            if (!event.teams || event.teams.length < 2) return;
+            for (let i = 0; i < 2; i++) {
+                const roster = teamRosters[i];
+                const captain = roster.captain !== null ? roster.players[roster.captain]?.name : event.teams[i].captain;
+                event.teams[i].players = roster.players.map(p => p.name);
+                event.teams[i].captain = captain || event.teams[i].captain;
+            }
         }
 
         function renderRoster(teamIndex) {
@@ -991,12 +1013,12 @@
             const player = teamRosters[teamIndex].players[playerIndex];
             
             if (!player.phone) {
-                alert('No phone number on file for this player');
+                showToast('No phone number on file for this player', 'warning');
                 return;
             }
 
             if (event.teams.length === 0) {
-                alert('Please create the event first before sending updates');
+                showToast('Please create the event first before sending updates', 'warning');
                 return;
             }
 
@@ -1838,40 +1860,44 @@
             const team1Name = document.getElementById('team1Name').value.trim();
 
             if (!team0Name || !team1Name) {
-                alert('Please enter both team names');
+                showToast('Please enter both team names', 'warning');
                 return;
             }
 
             if (teamRosters[0].players.length === 0 || teamRosters[1].players.length === 0) {
-                alert('Please add players to both teams');
+                showToast('Please add players to both teams', 'warning');
                 return;
             }
 
             if (teamRosters[0].captain === null || teamRosters[1].captain === null) {
-                alert('Please select a captain for each team');
+                showToast('Please select a captain for each team', 'warning');
                 return;
             }
 
-            // Check if event name already exists (unless we're editing the current event)
+            // If this name matches an already-loaded event, preserve its ID and
+            // treat this as an update — don't block or clear data.
             const savedEvents = getSavedEvents();
-            const existingEvent = savedEvents.find(e => 
-                e.name.toLowerCase() === name.toLowerCase() && 
-                e.id !== event.id  // Allow updating current event
+            const isUpdatingCurrent = event.name && event.name.toLowerCase() === name.toLowerCase();
+            const existingOther = !isUpdatingCurrent && savedEvents.find(e =>
+                e.name.toLowerCase() === name.toLowerCase()
             );
-            
-            if (existingEvent) {
-                alert(`An event named "${name}" already exists. Please choose a different name.`);
+
+            if (existingOther) {
+                showToast(`An event named "${name}" already exists — choose a different name.`, 'warning');
                 return;
             }
 
-            // SAVE team roster data before clearing (we need it!)
+            // Snapshot everything we need to preserve BEFORE clearAllData wipes state
+            const preservedId    = event.id;
+            const previousRounds = isUpdatingCurrent ? JSON.parse(JSON.stringify(event.rounds || [])) : [];
             const savedTeamRosters = JSON.parse(JSON.stringify(teamRosters));
-            
+
             // CLEAR ALL STALE DATA (event, liveScores, and old HTML)
-            clearAllData();  // Clear everything including old HTML
-            
-            // RESTORE team rosters (we just created these)
+            clearAllData();
+
+            // RESTORE preserved data
             teamRosters = savedTeamRosters;
+            if (preservedId) event.id = preservedId;
 
             // Update team names in case they were changed
             teamRosters[0].name = team0Name;
@@ -1895,14 +1921,13 @@
                 }
             ];
 
-            // Initialize days with empty matches
+            // Build rounds — preserve existing round data (ID, matches, course) when updating
             event.rounds = [];
             for (let i = 1; i <= numRounds; i++) {
                 const format = document.getElementById(`format${i}`).value;
                 const date = document.getElementById(`date${i}`).value;
-                // Preserve course: check existing rounds, then pending (searched before event created)
-                const existingRound = event.rounds && event.rounds[i - 1];
-                const course = (existingRound && existingRound.course)
+                const prev = previousRounds[i - 1];
+                const course = (prev && prev.course)
                     || (window._pendingCourses && window._pendingCourses[i - 1])
                     || null;
                 event.rounds.push({
@@ -1910,14 +1935,17 @@
                     format: format,
                     date: date || null,
                     course: course,
-                    matches: []
+                    // Preserve existing round ID and matches so Supabase does UPDATE not INSERT
+                    ...(prev && prev.id ? { id: prev.id } : {}),
+                    matches: (prev && prev.matches) ? prev.matches : []
                 });
             }
 
+            syncEventTeamsFromRosters();
             renderMatchups();
             switchTab('matchups');
             saveCurrentEvent();
-            alert('Event created! Now set up matchups for each round.');
+            showToast('Event created! Set up matchups for each round.', 'success', 4000);
         }
 
         function renderMatchups() {
@@ -1988,7 +2016,8 @@
                 `;
 
                 const usedTeam0Players = round.matches.flatMap(m => m.team0Players);
-                event.teams[0].players.forEach(player => {
+                const team0Players = teamRosters[0].players.map(p => p.name);
+                team0Players.forEach(player => {
                     const isUsed = usedTeam0Players.includes(player);
                     html += `
                         <label style="display: block; margin-bottom: 8px; ${isUsed ? 'opacity: 0.5;' : ''}">
@@ -2012,7 +2041,8 @@
                 `;
 
                 const usedTeam1Players = round.matches.flatMap(m => m.team1Players);
-                event.teams[1].players.forEach(player => {
+                const team1Players = teamRosters[1].players.map(p => p.name);
+                team1Players.forEach(player => {
                     const isUsed = usedTeam1Players.includes(player);
                     html += `
                         <label style="display: block; margin-bottom: 8px; ${isUsed ? 'opacity: 0.5;' : ''}">
@@ -2063,7 +2093,7 @@
             });
 
             if (team0Selected.length === 0 || team1Selected.length === 0) {
-                alert('Please select at least one player from each team');
+                showToast('Please select at least one player from each team', 'warning');
                 return;
             }
 
@@ -2080,11 +2110,13 @@
                 blowoutBonus: 0
             });
 
+            syncEventTeamsFromRosters();
             renderMatchups();
         }
 
         function deleteMatch(roundIndex, matchIndex) {
             event.rounds[roundIndex].matches.splice(matchIndex, 1);
+            syncEventTeamsFromRosters();
             renderMatchups();
         }
 
@@ -2103,7 +2135,7 @@
             renderLiveScoreboardTab();
             saveCurrentEvent();
             switchTab('scoring');
-            alert('Matchups finalized! Enter scores in the Scoring tab.');
+            showToast('Matchups finalized! Enter scores in the Scoring tab.', 'success', 4000);
         }
 
         function renderLiveScoreboardTab() {
@@ -2753,47 +2785,52 @@
                     for (const name of toRemove) {
                         const { data: p } = await supabaseClient
                             .from('players')
-                            .select('player_id, id')
+                            .select('id')
                             .eq('player_name', name)
                             .single();
                         if (p) {
-                            const pid = p.player_id || p.id;
                             await supabaseClient
                                 .from('team_players')
                                 .delete()
                                 .eq('team_id', dbTeamId)
-                                .eq('player_id', pid);
+                                .eq('player_id', p.id);
                             console.log(`Removed ${name} from team_players`);
                         }
                     }
 
-                    // Step C: Upsert each current player
+                    // Step C: Insert or find each current player (no onConflict — constraint may not exist)
                     for (const player of roster.players) {
-                        // Upsert into players table (no duplicates)
-                        const { data: p, error: pErr } = await supabaseClient
+                        let p = null;
+                        // Try to find existing player first
+                        const { data: existing } = await supabaseClient
                             .from('players')
-                            .upsert({ player_name: player.name }, {
-                                onConflict: 'player_name',
-                                ignoreDuplicates: false
-                            })
-                            .select('player_id, id')
-                            .single();
-
-                        if (pErr || !p) {
-                            console.error(`Could not upsert player ${player.name}:`, pErr);
-                            continue;
+                            .select('id')
+                            .eq('player_name', player.name)
+                            .maybeSingle();
+                        if (existing) {
+                            p = existing;
+                        } else {
+                            const { data: inserted, error: insertErr } = await supabaseClient
+                                .from('players')
+                                .insert({ player_name: player.name })
+                                .select('id')
+                                .single();
+                            if (insertErr) {
+                                console.error(`Could not insert player ${player.name}:`, insertErr);
+                                continue;
+                            }
+                            p = inserted;
                         }
+                        if (!p) continue;
 
-                        const pid = p.player_id || p.id;
                         const captainName = roster.captain !== null
                             ? roster.players[roster.captain]?.name : null;
 
-                        // Upsert into team_players
                         await supabaseClient
                             .from('team_players')
                             .upsert({
                                 team_id: dbTeamId,
-                                player_id: pid,
+                                player_id: p.id,
                                 is_captain: player.name === captainName
                             }, { onConflict: 'team_id,player_id', ignoreDuplicates: false });
                     }
@@ -2805,7 +2842,7 @@
             }
         }
 
-        async function saveCurrentEvent() {
+        async function saveCurrentEvent(opts = {}) {
             if (!event.name) return;
             
             const savedEvents = getSavedEvents();
@@ -2831,11 +2868,11 @@
             
             // Also save to Supabase if enabled
             if (isSupabaseEnabled) {
-                await saveEventToSupabase(eventToSave);
+                await saveEventToSupabase(eventToSave, opts);
             }
         }
         
-        async function saveEventToSupabase(eventData) {
+        async function saveEventToSupabase(eventData, opts = {}) {
             // Double-check Supabase is actually configured
             if (!supabaseClient || !isSupabaseEnabled) {
                 console.log('Supabase not configured, skipping sync');
@@ -2892,54 +2929,30 @@
                     savedEvent = result.data;
                     eventError = result.error;
                 } else {
-                    // Insert new event - first check if name already exists
-                    const { data: existingEvents } = await supabaseClient
+                    // No local Supabase ID — upsert by event_name to avoid duplicate key errors.
+                    // This handles cases where the local_* ID was never replaced with the real ID.
+                    const upsertResult = await supabaseClient
                         .from('events')
-                        .select('id, event_id, event_name')
-                        .eq('event_name', eventPayload.event_name);
-                    
-                    if (existingEvents && existingEvents.length > 0) {
-                        // Event with this name already exists - update it instead
-                        const existingEventId = existingEvents[0].event_id || existingEvents[0].id;
-                        console.log(`Event "${eventPayload.event_name}" already exists, updating instead (ID: ${existingEventId})`);
-                        
-                        let result = await supabaseClient
-                            .from('events')
-                            .update(eventPayload)
-                            .eq('event_id', existingEventId)
-                            .select()
-                            .single();
-                        
-                        if (result.error && result.error.code === '42703') {
-                            result = await supabaseClient
-                                .from('events')
-                                .update(eventPayload)
-                                .eq('id', existingEventId)
-                                .select()
-                                .single();
-                        }
-                        
-                        savedEvent = result.data;
-                        eventError = result.error;
-                        
-                        // Update local ID to match Supabase
-                        if (!eventError && savedEvent) {
-                            const dbEventId = savedEvent.event_id || savedEvent.id;
-                            event.id = dbEventId;
-                            eventData.id = dbEventId;
-                        }
-                    } else {
-                        // Insert new event
-                        const result = await supabaseClient
-                            .from('events')
-                            .insert(eventPayload)
-                            .select()
-                            .single();
-                        savedEvent = result.data;
-                        eventError = result.error;
+                        .upsert(eventPayload, { onConflict: 'event_name', ignoreDuplicates: false })
+                        .select()
+                        .single();
+
+                    savedEvent = upsertResult.data;
+                    eventError = upsertResult.error;
+
+                    // If upsert succeeded, pin the real Supabase ID locally so future
+                    // saves go through the UPDATE path and never hit this branch again.
+                    if (!eventError && savedEvent) {
+                        const dbEventId = savedEvent.event_id || savedEvent.id;
+                        event.id = dbEventId;
+                        eventData.id = dbEventId;
+                        // Persist the corrected ID to localStorage immediately
+                        const saved = getSavedEvents();
+                        const idx = saved.findIndex(e => e.name === event.name);
+                        if (idx >= 0) { saved[idx].id = dbEventId; localStorage.setItem('golfEvents', JSON.stringify(saved)); }
                     }
                 }
-                
+
                 if (eventError) throw eventError;
                 
                 if (!savedEvent) {
@@ -2962,6 +2975,14 @@
                     eventData.id = dbEventId;
                 }
                 
+                // If called for a roster-only change, just updating the blob above is enough.
+                // Skip re-saving teams/rounds/matches to avoid duplicate inserts.
+                if (opts.blobOnly) {
+                    showSyncStatus('Synced ✓', 'green');
+                    setTimeout(() => hideSyncStatus(), 2000);
+                    return;
+                }
+
                 // Step 2: Save teams
                 if (eventData.teams && eventData.teams.length > 0) {
                     for (const team of eventData.teams) {
@@ -3199,23 +3220,30 @@
                             for (const playerName in matchScores) {
                                 try {
                                     // Upsert player by name — prevents duplicates on repeated saves
-                                    const { data: player, error: playerError } = await supabaseClient
+                                    // Find or create player (no onConflict — constraint may not exist)
+                                    let player = null;
+                                    const { data: existingP } = await supabaseClient
                                         .from('players')
-                                        .upsert({ player_name: playerName }, {
-                                            onConflict: 'player_name',
-                                            ignoreDuplicates: false
-                                        })
-                                        .select('*')
-                                        .single();
-                                    
-                                    if (playerError) {
-                                        console.error(`Failed to upsert player ${playerName}:`, playerError);
-                                        continue;
+                                        .select('id')
+                                        .eq('player_name', playerName)
+                                        .maybeSingle();
+                                    if (existingP) {
+                                        player = existingP;
+                                    } else {
+                                        const { data: newP, error: insertPErr } = await supabaseClient
+                                            .from('players')
+                                            .insert({ player_name: playerName })
+                                            .select('id')
+                                            .single();
+                                        if (insertPErr) {
+                                            console.error(`Failed to insert player ${playerName}:`, insertPErr);
+                                            continue;
+                                        }
+                                        player = newP;
                                     }
                                     if (!player) continue;
-                                    
-                                    // Try common column names for player ID
-                                    const playerId = player.player_id || player.id || player.playerId;
+
+                                    const playerId = player.id;
                                     
                                     // Save each hole score
                                     const scores = matchScores[playerName];
@@ -3272,6 +3300,31 @@
             }
         }
         
+        function showToast(message, type = 'info', duration = 3000) {
+            const colors = { success: '#27ae60', error: '#e74c3c', warning: '#f39c12', info: '#3498db' };
+            const icons  = { success: '✓', error: '✗', warning: '⚠', info: 'ℹ' };
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                position:fixed; bottom:80px; left:50%; transform:translateX(-50%) translateY(20px);
+                background:${colors[type]}; color:white; padding:12px 22px; border-radius:24px;
+                font-size:0.92em; font-weight:600; z-index:99999;
+                box-shadow:0 4px 16px rgba(0,0,0,0.25); opacity:0;
+                transition:opacity 0.2s, transform 0.2s; pointer-events:none;
+                max-width:90vw; text-align:center; white-space:nowrap;
+            `;
+            toast.textContent = icons[type] + '  ' + message;
+            document.body.appendChild(toast);
+            requestAnimationFrame(() => {
+                toast.style.opacity = '1';
+                toast.style.transform = 'translateX(-50%) translateY(0)';
+            });
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(-50%) translateY(10px)';
+                setTimeout(() => toast.remove(), 250);
+            }, duration);
+        }
+
         function showSyncStatus(message, color) {
             let statusEl = document.getElementById('syncStatus');
             if (!statusEl) {
@@ -3373,7 +3426,7 @@
             }
             
             if (!savedEvent) {
-                alert('Event not found');
+                showToast('Event not found', 'error');
                 return;
             }
             
@@ -3431,13 +3484,14 @@
             
             // Render everything
             renderBothRosters();
+            syncEventTeamsFromRosters();
             renderMatchups();
             renderScoring();
             renderLiveScoring();
             renderLiveScoreboardTab();
             renderStandings();
             
-            alert(`Event "${event.name}" loaded successfully!`);
+            showToast(`Event "${event.name}" loaded ✓`, 'success');
             switchTab('teams');
         }
 
@@ -3469,7 +3523,7 @@
                     
                     if (deleteError) {
                         console.error('Supabase delete error:', deleteError);
-                        alert('Failed to delete from Supabase: ' + deleteError.message);
+                        showToast('Failed to delete from cloud: ' + deleteError.message, 'error', 5000);
                     } else {
                         console.log('Event deleted from Supabase:', eventId);
                     }
@@ -3515,7 +3569,7 @@
             
             localStorage.removeItem('golfEvents');
             console.log('localStorage cleared');
-            alert('Local events cleared. Refresh the list to see Supabase events.');
+            showToast('Local events cleared', 'info');
             refreshEventsList();
         }
 
