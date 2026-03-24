@@ -298,6 +298,17 @@
         </div>
 
         <!-- Bottom Navigation (mobile) -->
+        <!-- Active Event Banner -->
+        <div id="eventBanner" style="display:none;position:sticky;top:0;z-index:900;background:linear-gradient(135deg,#1a5276,#2980b9);color:white;padding:10px 16px;box-shadow:0 2px 8px rgba(0,0,0,0.25);">
+            <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;">
+                <div style="min-width:0;flex:1;">
+                    <div id="bannerName" style="font-weight:700;font-size:1em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+                    <div id="bannerMeta" style="opacity:0.82;font-size:0.82em;margin-top:2px;"></div>
+                </div>
+                <button onclick="startNewEvent()" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.4);color:white;border-radius:14px;padding:4px 12px;font-size:0.82em;cursor:pointer;white-space:nowrap;flex-shrink:0;">＋ New Event</button>
+            </div>
+        </div>
+
         <nav class="bottom-nav" id="bottomNav">
             <button class="nav-btn active" id="nav-setup" onclick="switchTab('setup',event)">
                 <span class="nav-icon">⚙️</span>Setup
@@ -327,6 +338,9 @@
             <button class="more-menu-btn" id="morenav-scoring" onclick="switchTab('scoring',event);toggleMoreMenu()">
                 <span class="nav-icon">📋</span> Scoring
             </button>
+            <button class="more-menu-btn" id="morenav-kickouts" onclick="switchTab('kickouts',event);toggleMoreMenu()">
+                <span class="nav-icon">👊</span> Kickouts
+            </button>
         </div>
 
         <div class="content">
@@ -338,6 +352,7 @@
                 <button class="tab" onclick="switchTab('livescoreboard', event)">Live Scoreboard</button>
                 <button class="tab" onclick="switchTab('live', event)">Live Scoring</button>
                 <button class="tab" onclick="switchTab('standings', event)">Standings</button>
+                <button class="tab" onclick="switchTab('kickouts', event)">Kickouts</button>
             </div>
 
             <!-- Setup Tab -->
@@ -460,7 +475,7 @@
                     </div>
                 </div>
 
-                <button class="btn" onclick="createGolfEvent()" style="margin-top: 30px;">Create Event & Setup Matchups</button>
+                <button class="btn" id="createEventBtn" onclick="createGolfEvent()" style="margin-top: 30px;">Create Event & Setup Matchups</button>
                 
                 <div style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: center;">
                     <p style="margin-bottom: 10px; color: #7f8c8d;">After creating the event, you'll configure matchups for each round</p>
@@ -504,6 +519,14 @@
             </div>
 
             <!-- Standings Tab -->
+            <div id="kickouts" class="tab-content">
+                <div id="kickoutsContent" class="empty-state">
+                    <div class="empty-state-icon">👊</div>
+                    <h3>No Kickouts Yet</h3>
+                    <p>Track kickouts during live scoring</p>
+                </div>
+            </div>
+
             <div id="standings" class="tab-content">
                 <div id="standingsContent" class="empty-state">
                     <div class="empty-state-icon">🏆</div>
@@ -567,6 +590,43 @@
 
         const formats = ['Scramble', 'Alternate Shot', 'Best Ball', 'Individual'];
 
+        function updateEventBanner() {
+            const banner = document.getElementById('eventBanner');
+            const bannerName = document.getElementById('bannerName');
+            const bannerMeta = document.getElementById('bannerMeta');
+            const setupHeading = document.getElementById('setupHeading');
+            const createHeading = document.getElementById('createEventHeading');
+            const createBtn = document.getElementById('createEventBtn');
+
+            if (!banner) return; // DOM not ready yet
+
+            if (event.name) {
+                banner.style.display = 'block';
+                bannerName.textContent = '⛳ ' + event.name;
+                const t0 = event.teams[0] ? event.teams[0].name : '';
+                const t1 = event.teams[1] ? event.teams[1].name : '';
+                const rounds = event.rounds ? event.rounds.length : 0;
+                bannerMeta.textContent = `${t0} vs ${t1}  ·  ${rounds} round${rounds !== 1 ? 's' : ''}  ·  ${event.scoringType === 'match' ? 'Match Play' : 'Stroke Play'}`;
+                if (setupHeading) setupHeading.textContent = 'Edit Event';
+                if (createHeading) { createHeading.innerHTML = '✏️ Edit Current Event'; createHeading.style.color = '#2980b9'; }
+                if (createBtn) createBtn.textContent = 'Save Changes & Update Matchups';
+            } else {
+                banner.style.display = 'none';
+                if (setupHeading) setupHeading.textContent = 'Event Configuration';
+                if (createHeading) { createHeading.innerHTML = '🆕 Create New Event'; createHeading.style.color = '#2c3e50'; }
+                if (createBtn) createBtn.textContent = 'Create Event & Setup Matchups';
+            }
+        }
+
+        function startNewEvent() {
+            if (event.name && !confirm(`Start a new event? "${event.name}" will remain saved.`)) return;
+            clearAllData();
+            updateEventBanner();
+            switchTab('setup');
+            document.getElementById('eventName').value = '';
+            showToast('Ready to create a new event', 'info');
+        }
+
         function switchTab(tabName, clickEvent) {
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -614,6 +674,9 @@
             if (tabName === 'matchups' && event.teams && event.teams.length >= 2) {
                 syncEventTeamsFromRosters();
                 renderMatchups();
+            }
+            if (tabName === 'kickouts') {
+                renderKickouts();
             }
         }
 
@@ -1314,6 +1377,15 @@
                     event.liveScores[currentLiveRound][currentLiveMatch][player] = Array(18).fill(null);
                 }
             });
+            // Initialize kickout tracking: __kickouts__[player] = Array(18).fill(0)
+            if (!event.liveScores[currentLiveRound][currentLiveMatch].__kickouts__) {
+                event.liveScores[currentLiveRound][currentLiveMatch].__kickouts__ = {};
+            }
+            allPlayers.forEach(player => {
+                if (!event.liveScores[currentLiveRound][currentLiveMatch].__kickouts__[player]) {
+                    event.liveScores[currentLiveRound][currentLiveMatch].__kickouts__[player] = Array(18).fill(0);
+                }
+            });
 
             // Calculate current match status
             const liveData = getLiveMatchData(currentLiveRound, currentLiveMatch);
@@ -1498,6 +1570,7 @@
                                 </button>
                             `).join('')}
                         </div>
+                        ${kickoutCounterHTML(match.team0Players, currentLiveHole, event.liveScores[currentLiveRound][currentLiveMatch])}
                     </div>
                 `;
             } else {
@@ -1525,6 +1598,7 @@
                                     </button>
                                 `).join('')}
                             </div>
+                            ${kickoutCounterHTML(player, currentLiveHole, event.liveScores[currentLiveRound][currentLiveMatch])}
                         </div>
                     `;
                 });
@@ -1561,6 +1635,7 @@
                                 </button>
                             `).join('')}
                         </div>
+                        ${kickoutCounterHTML(match.team1Players, currentLiveHole, event.liveScores[currentLiveRound][currentLiveMatch])}
                     </div>
                 `;
             } else {
@@ -1587,6 +1662,7 @@
                                     </button>
                                 `).join('')}
                             </div>
+                            ${kickoutCounterHTML(player, currentLiveHole, event.liveScores[currentLiveRound][currentLiveMatch])}
                         </div>
                     `;
                 });
@@ -1596,6 +1672,89 @@
 
             return html;
         }
+        function recordKickout(playersJson, holeNumber, delta) {
+            const players = JSON.parse(playersJson);
+            const ko = event.liveScores[currentLiveRound][currentLiveMatch].__kickouts__;
+            players.forEach(player => {
+                if (!ko[player]) ko[player] = Array(18).fill(0);
+                ko[player][holeNumber - 1] = Math.max(0, (ko[player][holeNumber - 1] || 0) + delta);
+            });
+            saveCurrentEvent({ blobOnly: true });
+            renderLiveScoring();
+        }
+
+        function kickoutCounterHTML(players, holeNumber, liveScores) {
+            // players can be a single name string or an array
+            const playerArr = Array.isArray(players) ? players : [players];
+            const ko = liveScores.__kickouts__ || {};
+            // All players in the group share the same count — read from first
+            const count = (ko[playerArr[0]] && ko[playerArr[0]][holeNumber - 1]) || 0;
+            const playersJson = JSON.stringify(playerArr).replace(/"/g, "&quot;");
+            return `
+                <div style="display:flex;align-items:center;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid #e0e0e0;">
+                    <span style="font-size:0.85em;color:#7f8c8d;flex:1;">👊 Kickouts</span>
+                    <button onclick="recordKickout('${playersJson}',${holeNumber},-1)"
+                            style="width:34px;height:34px;border-radius:50%;border:2px solid #e74c3c;background:white;color:#e74c3c;font-size:1.2em;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;">−</button>
+                    <span style="min-width:24px;text-align:center;font-weight:700;font-size:1.1em;">${count}</span>
+                    <button onclick="recordKickout('${playersJson}',${holeNumber},1)"
+                            style="width:34px;height:34px;border-radius:50%;border:2px solid #27ae60;background:white;color:#27ae60;font-size:1.2em;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;">+</button>
+                </div>`;
+        }
+
+        function renderKickouts() {
+            const container = document.getElementById('kickoutsContent');
+            if (!event.teams || event.teams.length === 0) {
+                container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">👊</div><h3>No Event Loaded</h3></div>`;
+                return;
+            }
+
+            // Aggregate kickouts per player across all rounds and matches
+            const totals = {}; // { playerName: totalKickouts }
+            const allRosterPlayers = [...teamRosters[0].players.map(p=>p.name), ...teamRosters[1].players.map(p=>p.name)];
+            allRosterPlayers.forEach(p => totals[p] = 0);
+
+            event.rounds.forEach((round, ri) => {
+                round.matches.forEach((match, mi) => {
+                    const scores = event.liveScores[ri] && event.liveScores[ri][mi];
+                    if (!scores || !scores.__kickouts__) return;
+                    Object.entries(scores.__kickouts__).forEach(([player, holes]) => {
+                        const sum = holes.reduce((a, b) => a + (b || 0), 0);
+                        if (totals[player] !== undefined) totals[player] += sum;
+                        else totals[player] = sum;
+                    });
+                });
+            });
+
+            // Sort descending by kickout count
+            const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+
+            // Split by team
+            const t0names = new Set(teamRosters[0].players.map(p=>p.name));
+            const t1names = new Set(teamRosters[1].players.map(p=>p.name));
+
+            const renderTeam = (teamName, color, border, names) => {
+                const players = sorted.filter(([p]) => names.has(p));
+                let h = `<div style="background:${color};border:3px solid ${border};border-radius:10px;padding:15px;margin-bottom:16px;">
+                    <h3 style="color:${border};margin-bottom:12px;text-align:center;">${teamName}</h3>
+                    <div style="display:grid;gap:8px;">`;
+                players.forEach(([player, count], i) => {
+                    const medal = i === 0 && count > 0 ? '🥇 ' : '';
+                    h += `<div style="display:flex;align-items:center;background:white;border-radius:8px;padding:10px 14px;">
+                        <span style="flex:1;font-weight:600;">${medal}${player}</span>
+                        <span style="font-size:1.5em;font-weight:700;color:${border};">${count}</span>
+                        <span style="font-size:0.8em;color:#7f8c8d;margin-left:6px;">kickouts</span>
+                    </div>`;
+                });
+                h += `</div></div>`;
+                return h;
+            };
+
+            let html = `<h2 style="margin-bottom:16px;">👊 Kickout Leaders</h2>`;
+            html += renderTeam(event.teams[0].name, '#ebf5fb', '#3498db', t0names);
+            html += renderTeam(event.teams[1].name, '#fadbd8', '#e74c3c', t1names);
+            container.innerHTML = html;
+        }
+
         function selectLiveMatch(roundIndex, matchIndex) {
             currentLiveRound = roundIndex;
             currentLiveMatch = matchIndex;
@@ -1672,8 +1831,9 @@
 
             const matchScores = event.liveScores[roundIndex][matchIndex];
 
-            // Check if any player has scores
+            // Check if any player has scores (skip __kickouts__ metadata key)
             const hasAnyScores = Object.keys(matchScores).some(player => 
+                player !== '__kickouts__' && Array.isArray(matchScores[player]) &&
                 matchScores[player].some(score => score !== null)
             );
 
@@ -1931,6 +2091,7 @@
             renderMatchups();
             switchTab('matchups');
             saveCurrentEvent();
+            updateEventBanner();
             showToast('Event created! Set up matchups for each round.', 'success', 4000);
         }
 
@@ -3488,7 +3649,9 @@
             renderLiveScoring();
             renderLiveScoreboardTab();
             renderStandings();
+            renderKickouts();
             
+            updateEventBanner();
             showToast(`Event "${event.name}" loaded ✓`, 'success');
             switchTab('teams');
         }
