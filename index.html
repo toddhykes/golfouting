@@ -1104,7 +1104,7 @@
             message += `Captain: ${team.captain}\n\n`;
             
             message += `📊 CURRENT STANDINGS:\n`;
-            message += `${team.name}: ${team.points} pts\n`;
+            const pts = +team.points; message += `${team.name}: ${pts % 1 === 0 ? pts : pts.toFixed(2)} pts\n`;
             message += `${opponentTeam.name}: ${opponentTeam.points} pts\n\n`;
             
             // Find matches this player is in
@@ -2567,11 +2567,11 @@
                 if (liveData.hasScores && liveData.team0Total !== null && liveData.team1Total !== null) {
                     const strokeDifference = Math.abs(liveData.team0Total - liveData.team1Total);
                     match.marginOfVictory = strokeDifference;
-                    match.blowoutBonus = strokeDifference * 0.05;
+                    match.blowoutBonus = Math.round(strokeDifference * 0.05 * 100) / 100;
                 } else {
                     // Fallback to manual entry if available
                     if (match.marginOfVictory) {
-                        match.blowoutBonus = match.marginOfVictory * 0.05;
+                        match.blowoutBonus = Math.round((match.marginOfVictory || 0) * 0.05 * 100) / 100;
                     } else {
                         match.blowoutBonus = 0;
                     }
@@ -2652,7 +2652,7 @@
                                 match.holeFinished && 
                                 match.holeFinished < 17 && 
                                 match.marginOfVictory) {
-                                match.blowoutBonus = match.marginOfVictory * 0.05;
+                                match.blowoutBonus = Math.round((match.marginOfVictory || 0) * 0.05 * 100) / 100;
                             } else {
                                 match.blowoutBonus = 0;
                             }
@@ -2676,16 +2676,14 @@
                         console.log(`    Match ${matchIndex + 1} COMPLETE - awarding points:`, match.result);
                         
                         if (match.result === 0) {
-                            event.teams[0].points += 1;
-                            event.teams[0].points += (match.blowoutBonus || 0);
+                            event.teams[0].points = Math.round((event.teams[0].points + 1 + (match.blowoutBonus || 0)) * 100) / 100;
                             console.log(`      Team 0 gets 1 + ${match.blowoutBonus || 0} = ${1 + (match.blowoutBonus || 0)}`);
                         } else if (match.result === 1) {
-                            event.teams[1].points += 1;
-                            event.teams[1].points += (match.blowoutBonus || 0);
+                            event.teams[1].points = Math.round((event.teams[1].points + 1 + (match.blowoutBonus || 0)) * 100) / 100;
                             console.log(`      Team 1 gets 1 + ${match.blowoutBonus || 0} = ${1 + (match.blowoutBonus || 0)}`);
                         } else if (match.result === 0.5) {
-                            event.teams[0].points += 0.5;
-                            event.teams[1].points += 0.5;
+                            event.teams[0].points = Math.round((event.teams[0].points + 0.5) * 100) / 100;
+                            event.teams[1].points = Math.round((event.teams[1].points + 0.5) * 100) / 100;
                             console.log(`      Both teams get 0.5`);
                         }
                     } else {
@@ -2724,13 +2722,13 @@
                 <div class="score-summary">
                     <div class="team-score team-0 ${team0Leading ? 'leading' : ''}">
                         <h3>${event.teams[0].name}</h3>
-                        <div class="score">${event.teams[0].points}</div>
+                        <div class="score">${(+event.teams[0].points % 1 === 0 ? +event.teams[0].points : (+event.teams[0].points).toFixed(2))}</div>
                         <div style="margin-top: 10px; font-size: 0.9em;">Captain: ${event.teams[0].captain}</div>
                     </div>
                     <div class="score-divider">-</div>
                     <div class="team-score team-1 ${team1Leading ? 'leading' : ''}">
                         <h3>${event.teams[1].name}</h3>
-                        <div class="score">${event.teams[1].points}</div>
+                        <div class="score">${(+event.teams[1].points % 1 === 0 ? +event.teams[1].points : (+event.teams[1].points).toFixed(2))}</div>
                         <div style="margin-top: 10px; font-size: 0.9em;">Captain: ${event.teams[1].captain}</div>
                     </div>
                 </div>
