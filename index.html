@@ -609,7 +609,7 @@
                 bannerMeta.textContent = `${t0} vs ${t1}  ·  ${rounds} round${rounds !== 1 ? 's' : ''}  ·  ${event.scoringType === 'match' ? 'Match Play' : 'Stroke Play'}`;
                 if (setupHeading) setupHeading.textContent = 'Edit Event';
                 if (createHeading) { createHeading.innerHTML = '✏️ Edit Current Event'; createHeading.style.color = '#2980b9'; }
-                if (createBtn) createBtn.textContent = 'Save Changes & Update Matchups';
+                if (createBtn) createBtn.textContent = 'Save Event Settings';
             } else {
                 banner.style.display = 'none';
                 if (setupHeading) setupHeading.textContent = 'Event Configuration';
@@ -1240,10 +1240,13 @@
                             }
 
                             html += `
-                                <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px; margin-bottom: 10px;">
+                                <div onclick="selectLiveMatch(${roundIndex},${matchIndex});switchTab('live')"
+                                     style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px; margin-bottom: 10px; cursor: pointer; transition: background 0.15s;"
+                                     onmouseenter="this.style.background='rgba(255,255,255,0.25)'"
+                                     onmouseleave="this.style.background='rgba(255,255,255,0.15)'">
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
                                         <div>
-                                            <div style="font-weight: 600; margin-bottom: 5px;">Match ${matchIndex + 1}</div>
+                                            <div style="font-weight: 600; margin-bottom: 5px;">Match ${matchIndex + 1} <span style="font-size:0.75em;opacity:0.7;">▶ Score</span></div>
                                             <div style="font-size: 0.9em; opacity: 0.9;">
                                                 ${match.team0Players.join(' & ')} vs ${match.team1Players.join(' & ')}
                                             </div>
@@ -1363,29 +1366,7 @@
             }
             const match = round.matches[currentLiveMatch];
             
-            // Initialize scores for all players if needed
-            if (!event.liveScores[currentLiveRound]) {
-                event.liveScores[currentLiveRound] = {};
-            }
-            if (!event.liveScores[currentLiveRound][currentLiveMatch]) {
-                event.liveScores[currentLiveRound][currentLiveMatch] = {};
-            }
-
             const allPlayers = [...match.team0Players, ...match.team1Players];
-            allPlayers.forEach(player => {
-                if (!event.liveScores[currentLiveRound][currentLiveMatch][player]) {
-                    event.liveScores[currentLiveRound][currentLiveMatch][player] = Array(18).fill(null);
-                }
-            });
-            // Initialize kickout tracking: __kickouts__[player] = Array(18).fill(0)
-            if (!event.liveScores[currentLiveRound][currentLiveMatch].__kickouts__) {
-                event.liveScores[currentLiveRound][currentLiveMatch].__kickouts__ = {};
-            }
-            allPlayers.forEach(player => {
-                if (!event.liveScores[currentLiveRound][currentLiveMatch].__kickouts__[player]) {
-                    event.liveScores[currentLiveRound][currentLiveMatch].__kickouts__[player] = Array(18).fill(0);
-                }
-            });
 
             // Calculate current match status
             const liveData = getLiveMatchData(currentLiveRound, currentLiveMatch);
@@ -1755,10 +1736,29 @@
             container.innerHTML = html;
         }
 
+        function initLiveScores(roundIndex, matchIndex) {
+            // Initialize score arrays exactly once when a match is selected.
+            // Never called from render functions — prevents spurious saves.
+            const match = event.rounds[roundIndex].matches[matchIndex];
+            if (!match) return;
+            if (!event.liveScores[roundIndex]) event.liveScores[roundIndex] = {};
+            if (!event.liveScores[roundIndex][matchIndex]) event.liveScores[roundIndex][matchIndex] = {};
+            const ms = event.liveScores[roundIndex][matchIndex];
+            const allPlayers = [...match.team0Players, ...match.team1Players];
+            allPlayers.forEach(player => {
+                if (!ms[player]) ms[player] = Array(18).fill(null);
+            });
+            if (!ms.__kickouts__) ms.__kickouts__ = {};
+            allPlayers.forEach(player => {
+                if (!ms.__kickouts__[player]) ms.__kickouts__[player] = Array(18).fill(0);
+            });
+        }
+
         function selectLiveMatch(roundIndex, matchIndex) {
             currentLiveRound = roundIndex;
             currentLiveMatch = matchIndex;
             currentLiveHole = 1;
+            initLiveScores(roundIndex, matchIndex);  // init once here, not on every render
             renderLiveScoring();
         }
 
@@ -1780,39 +1780,31 @@
         }
 
         function recordPlayerScore(playerName, holeNumber, score) {
+            initLiveScores(currentLiveRound, currentLiveMatch); // ensure arrays exist
             const scores = event.liveScores[currentLiveRound][currentLiveMatch][playerName];
             scores[holeNumber - 1] = score;
-            
-            // Recalculate match results from live scores
             calculatePoints();
-            
-            // Update all views to show live changes
             renderLiveScoring();
             renderScoring();
             renderStandings();
             renderLiveScoreboardTab();
-            saveCurrentEvent();
+            saveCurrentEvent({ blobOnly: true }); // scores live in blob — no need for full pipeline
         }
 
         function recordTeamScore(teamIndex, holeNumber, score) {
-            // For scramble, record the same score for all players on the team
+            initLiveScores(currentLiveRound, currentLiveMatch); // ensure arrays exist
             const match = event.rounds[currentLiveRound].matches[currentLiveMatch];
             const teamPlayers = teamIndex === 0 ? match.team0Players : match.team1Players;
-            
             teamPlayers.forEach(player => {
                 const scores = event.liveScores[currentLiveRound][currentLiveMatch][player];
                 scores[holeNumber - 1] = score;
             });
-            
-            // Recalculate match results from live scores
             calculatePoints();
-            
-            // Update all views to show live changes
             renderLiveScoring();
             renderScoring();
             renderStandings();
             renderLiveScoreboardTab();
-            saveCurrentEvent();
+            saveCurrentEvent({ blobOnly: true }); // scores live in blob — no need for full pipeline
         }
 
         function getLiveMatchData(roundIndex, matchIndex) {
@@ -2092,7 +2084,7 @@
             switchTab('matchups');
             saveCurrentEvent();
             updateEventBanner();
-            showToast('Event created! Set up matchups for each round.', 'success', 4000);
+            showToast(isUpdatingCurrent ? 'Event settings saved ✓' : 'Event created! Set up matchups for each round.', 'success', 4000);
         }
 
         function renderMatchups() {
@@ -2213,7 +2205,7 @@
                 `;
             });
 
-            html += `<button class="btn" onclick="finalizeMatchups()" style="margin-top: 20px; width: 100%;">Finalize Matchups & Start Scoring</button>`;
+
 
             container.innerHTML = html;
         }
@@ -2258,32 +2250,25 @@
             });
 
             syncEventTeamsFromRosters();
+            saveCurrentEvent();          // full save — persists new match to Supabase
             renderMatchups();
+            renderScoring();
+            renderLiveScoring();
+            renderLiveScoreboardTab();
+            showToast('Match added ✓', 'success');
         }
 
         function deleteMatch(roundIndex, matchIndex) {
             event.rounds[roundIndex].matches.splice(matchIndex, 1);
             syncEventTeamsFromRosters();
+            saveCurrentEvent();
             renderMatchups();
-        }
-
-        function finalizeMatchups() {
-            // Check that all days have at least one match
-            const roundsWithoutMatches = event.rounds.filter(d => d.matches.length === 0);
-            if (roundsWithoutMatches.length > 0) {
-                const roundNumbers = roundsWithoutMatches.map(d => d.roundNumber).join(', ');
-                if (!confirm(`Round(s) ${roundNumbers} have no matches. Continue anyway?`)) {
-                    return;
-                }
-            }
-
             renderScoring();
             renderLiveScoring();
             renderLiveScoreboardTab();
-            saveCurrentEvent();
-            switchTab('scoring');
-            showToast('Matchups finalized! Enter scores in the Scoring tab.', 'success', 4000);
         }
+
+
 
         function renderLiveScoreboardTab() {
             const container = document.getElementById('liveScoreboardContent');
