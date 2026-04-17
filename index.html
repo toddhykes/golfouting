@@ -2955,18 +2955,10 @@
             }
             
             try {
-                // Try both column names
-                let result = await supabaseClient
+                const result = await supabaseClient
                     .from('events')
                     .select('*')
                     .order('created_at', { ascending: false });
-                
-                if (result.error && result.error.code === '42703') {
-                    // Try without ordering if column doesn't exist
-                    result = await supabaseClient
-                        .from('events')
-                        .select('*');
-                }
                 
                 if (result.error) {
                     console.error('Supabase load error:', result.error);
@@ -2976,7 +2968,7 @@
                 // Convert Supabase events to our format
                 const events = result.data || [];
                 return events.map(e => ({
-                    id: e.event_id || e.id,
+                    id: e.id,
                     name: e.event_name,
                     scoringType: e.scoring_type,
                     blowoutBonus: e.blowout_bonus_enabled,
@@ -3169,24 +3161,12 @@
                 let savedEvent, eventError;
                 
                 if (eventId !== null) {
-                    // Update existing event - try event_id first, then id
-                    let result = await supabaseClient
+                    const result = await supabaseClient
                         .from('events')
                         .update(eventPayload)
-                        .eq('event_id', eventId)
+                        .eq('id', eventId)
                         .select()
                         .single();
-                    
-                    // If column doesn't exist (42703), try 'id' instead
-                    if (result.error && result.error.code === '42703') {
-                        result = await supabaseClient
-                            .from('events')
-                            .update(eventPayload)
-                            .eq('id', eventId)
-                            .select()
-                            .single();
-                    }
-                    
                     savedEvent = result.data;
                     eventError = result.error;
                 } else {
@@ -3204,7 +3184,7 @@
                     // If upsert succeeded, pin the real Supabase ID locally so future
                     // saves go through the UPDATE path and never hit this branch again.
                     if (!eventError && savedEvent) {
-                        const dbEventId = savedEvent.event_id || savedEvent.id;
+                        const dbEventId = savedEvent.id;
                         event.id = dbEventId;
                         eventData.id = dbEventId;
                         // Persist the corrected ID to localStorage immediately
@@ -3221,11 +3201,11 @@
                 }
                 
                 // Try both column names for compatibility (id vs event_id)
-                const dbEventId = savedEvent.event_id || savedEvent.id;
+                const dbEventId = savedEvent.id;
                 
                 if (!dbEventId) {
                     console.error('Event saved but no ID found:', savedEvent);
-                    throw new Error('Event was saved but no ID was returned (tried event_id and id)');
+                    throw new Error('Event was saved but no ID was returned');
                 }
                 
                 console.log('Event saved with ID:', dbEventId);
@@ -3258,23 +3238,12 @@
                         let savedTeam, teamError;
                         
                         if (teamId !== null) {
-                            // Update existing team - try team_id first, then id
-                            let result = await supabaseClient
+                            const result = await supabaseClient
                                 .from('teams')
                                 .update(teamPayload)
-                                .eq('team_id', teamId)
+                                .eq('id', teamId)
                                 .select()
                                 .single();
-                            
-                            if (result.error && result.error.code === '42703') {
-                                result = await supabaseClient
-                                    .from('teams')
-                                    .update(teamPayload)
-                                    .eq('id', teamId)
-                                    .select()
-                                    .single();
-                            }
-                            
                             savedTeam = result.data;
                             teamError = result.error;
                         } else {
@@ -3297,7 +3266,7 @@
                             throw new Error('Team save returned null');
                         }
                         
-                        const dbTeamId = savedTeam.team_id || savedTeam.id;
+                        const dbTeamId = savedTeam.id;
                         if (team.id !== dbTeamId) {
                             team.id = dbTeamId;
                         }
@@ -3339,7 +3308,7 @@
                             throw new Error('Round save returned null');
                         }
                         
-                        const dbRoundId = savedRound.round_id || savedRound.id;
+                        const dbRoundId = savedRound.id;
                         if (round.id !== dbRoundId) {
                             round.id = dbRoundId;
                         }
@@ -3386,21 +3355,12 @@
                                 // Otherwise INSERT — if that hits a conflict, swallow it and fetch the existing row.
                                 let savedMatch, matchError;
                                 if (matchId !== null) {
-                                    // Known row — update by id
-                                    let result = await supabaseClient
+                                    const result = await supabaseClient
                                         .from('matches')
                                         .update(matchPayload)
                                         .eq('id', matchId)
                                         .select()
                                         .single();
-                                    if (result.error && result.error.code === '42703') {
-                                        result = await supabaseClient
-                                            .from('matches')
-                                            .update(matchPayload)
-                                            .eq('match_id', matchId)
-                                            .select()
-                                            .single();
-                                    }
                                     savedMatch = result.data;
                                     matchError = result.error;
                                 } else {
@@ -3435,7 +3395,7 @@
                                     throw new Error('Match save returned null');
                                 }
                                 
-                                const dbMatchId = savedMatch.match_id || savedMatch.id;
+                                const dbMatchId = savedMatch.id;
                                 if (match.id !== dbMatchId) {
                                     match.id = dbMatchId;
                                 }
@@ -3612,63 +3572,48 @@
 
         async function loadSavedEvent(eventId) {
             let savedEvent = null;
-            
-            // Always search localStorage first by ID — it has the full event data
-            // including teamRosters, rounds, liveScores, etc.
-            const localEvents = getSavedEvents();
-            savedEvent = localEvents.find(e => e.id === eventId);
-            
-            // If not found by ID (e.g. Supabase ID differs from local ID),
-            // try matching by event name using the Supabase stub's name
-            if (!savedEvent && supabaseClient && isSupabaseEnabled) {
+
+            // When Supabase is enabled, always load from the blob — it is the
+            // canonical source and contains full teamRosters, rounds, liveScores.
+            // localStorage only has stubs (no teamRosters) so don't trust it.
+            if (supabaseClient && isSupabaseEnabled) {
                 try {
                     showSyncStatus('Loading from cloud...', 'blue');
-                    
-                    let result = await supabaseClient
+
+                    const result = await supabaseClient
                         .from('events')
                         .select('*')
-                        .eq('event_id', eventId)
+                        .eq('id', eventId)
                         .single();
-                    
-                    if (result.error && result.error.code === '42703') {
-                        result = await supabaseClient
-                            .from('events')
-                            .select('*')
-                            .eq('id', eventId)
-                            .single();
-                    }
-                    
+
                     if (result.data) {
-                        const eventName = result.data.event_name;
-                        // Try to find the full event in localStorage by name first
-                        savedEvent = localEvents.find(e => 
-                            e.name && e.name.toLowerCase() === eventName.toLowerCase()
-                        );
-                        
-                        if (!savedEvent) {
-                            // No local copy — try to restore from the event_data blob
-                            let blob = {};
-                            if (result.data.event_data) {
-                                try { blob = JSON.parse(result.data.event_data); } catch(e) {}
-                            }
-                            savedEvent = {
-                                id: result.data.event_id || result.data.id,
-                                name: eventName,
-                                scoringType: result.data.scoring_type,
-                                blowoutBonus: result.data.blowout_bonus_enabled,
-                                teams: blob.teams || [],
-                                rounds: blob.rounds || [],
-                                liveScores: blob.liveScores || {},
-                                teamRosters: blob.teamRosters || []
-                            };
+                        let blob = {};
+                        if (result.data.event_data) {
+                            try { blob = JSON.parse(result.data.event_data); } catch(e) {}
                         }
+                        savedEvent = {
+                            id: result.data.id,
+                            name: result.data.event_name,
+                            scoringType: result.data.scoring_type,
+                            blowoutBonus: result.data.blowout_bonus_enabled,
+                            teams: blob.teams || [],
+                            rounds: blob.rounds || [],
+                            liveScores: blob.liveScores || {},
+                            teamRosters: blob.teamRosters || []
+                        };
                     }
-                    
+
                     hideSyncStatus();
                 } catch (error) {
                     console.error('Error loading from Supabase:', error);
                     hideSyncStatus();
                 }
+            }
+
+            // Fallback to localStorage if Supabase not available or returned nothing
+            if (!savedEvent) {
+                const localEvents = getSavedEvents();
+                savedEvent = localEvents.find(e => String(e.id) === String(eventId));
             }
             
             if (!savedEvent) {
@@ -3749,25 +3694,10 @@
             // Delete from Supabase if enabled
             if (supabaseClient && isSupabaseEnabled) {
                 try {
-                    // Try both column names for compatibility
-                    let deleteError;
-                    
-                    // Try event_id first
-                    const result1 = await supabaseClient
+                    const { error: deleteError } = await supabaseClient
                         .from('events')
                         .delete()
-                        .eq('event_id', eventId);
-                    
-                    if (result1.error && result1.error.code === '42703') {
-                        // Column doesn't exist, try 'id'
-                        const result2 = await supabaseClient
-                            .from('events')
-                            .delete()
-                            .eq('id', eventId);
-                        deleteError = result2.error;
-                    } else {
-                        deleteError = result1.error;
-                    }
+                        .eq('id', eventId);
                     
                     if (deleteError) {
                         console.error('Supabase delete error:', deleteError);
