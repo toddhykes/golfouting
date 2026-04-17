@@ -45,6 +45,7 @@
         #supabaseStatus, #anthropicKeyStatus { font-size: 0.72em; opacity: 0.9; margin-top: 3px; }
 
         /* ── Bottom Nav ── */
+        :root { --banner-h: 0px; }
         .bottom-nav {
             position: fixed;
             bottom: 0; left: 0; right: 0;
@@ -480,6 +481,17 @@
                 <div style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: center;">
                     <p style="margin-bottom: 10px; color: #7f8c8d;">After creating the event, you'll configure matchups for each round</p>
                 </div>
+
+                <!-- Message All -->
+                <div style="margin-top: 24px; padding: 20px; background: #eaf4fb; border: 2px solid #3498db; border-radius: 10px;">
+                    <h3 style="margin:0 0 12px 0; color:#2c3e50; font-size:1em;">📢 Message All Players</h3>
+                    <textarea id="broadcastMsg" rows="3"
+                              placeholder="Type your message here… event name will be appended automatically."
+                              style="width:100%;box-sizing:border-box;padding:10px;border:2px solid #d0e8f7;border-radius:8px;
+                                     font-size:1em;resize:vertical;font-family:inherit;margin-bottom:10px;"></textarea>
+                    <div id="broadcastStatus" style="font-size:0.85em;color:#7f8c8d;margin-bottom:10px;min-height:1.2em;"></div>
+                    <button class="btn" onclick="sendBroadcastSMS()" style="width:100%;">📱 Send to All Players</button>
+                </div>
             </div>
 
             <!-- Scoring Tab -->
@@ -602,6 +614,9 @@
 
             if (event.name) {
                 banner.style.display = 'block';
+                requestAnimationFrame(() => {
+                    document.documentElement.style.setProperty('--banner-h', banner.offsetHeight + 'px');
+                });
                 bannerName.textContent = '⛳ ' + event.name;
                 const t0 = event.teams[0] ? event.teams[0].name : '';
                 const t1 = event.teams[1] ? event.teams[1].name : '';
@@ -612,6 +627,7 @@
                 if (createBtn) createBtn.textContent = 'Save Event Settings';
             } else {
                 banner.style.display = 'none';
+                document.documentElement.style.setProperty('--banner-h', '0px');
                 if (setupHeading) setupHeading.textContent = 'Event Configuration';
                 if (createHeading) { createHeading.innerHTML = '🆕 Create New Event'; createHeading.style.color = '#2c3e50'; }
                 if (createBtn) createBtn.textContent = 'Create Event & Setup Matchups';
@@ -1074,24 +1090,99 @@
             renderRoster(1);
         }
 
-        function sendSMS(teamIndex, playerIndex) {
+        async function sendBroadcastSMS() {
+            const msgEl = document.getElementById('broadcastMsg');
+            const statusEl = document.getElementById('broadcastStatus');
+            const userText = msgEl.value.trim();
+
+            if (!userText) {
+                showToast('Please type a message first', 'warning');
+                return;
+            }
+            if (!event.name) {
+                showToast('Load an event first', 'warning');
+                return;
+            }
+
+            // Collect all unique phone numbers from both rosters
+            const recipients = [];
+            teamRosters.forEach(roster => {
+                roster.players.forEach(player => {
+                    if (player.phone) {
+                        const digits = player.phone.replace(/\D/g, '');
+                        if (digits.length >= 10 && !recipients.find(r => r.digits === digits)) {
+                            recipients.push({ name: player.name, digits });
+                        }
+                    }
+                });
+            });
+
+            if (recipients.length === 0) {
+                showToast('No phone numbers on file', 'warning');
+                return;
+            }
+
+            const fullMessage = `${userText}\n\n— ${event.name}`;
+            statusEl.textContent = `Sending to ${recipients.length} player${recipients.length !== 1 ? 's' : ''}…`;
+
+            let sent = 0, failed = 0;
+            for (const r of recipients) {
+                try {
+                    const resp = await fetch('/.netlify/functions/sms', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ to: r.digits, message: fullMessage })
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok) throw new Error(data.error || 'failed');
+                    sent++;
+                    statusEl.textContent = `Sent ${sent} / ${recipients.length}…`;
+                } catch (err) {
+                    failed++;
+                    console.error(`SMS to ${r.name} failed:`, err);
+                }
+            }
+
+            if (failed === 0) {
+                statusEl.textContent = `✓ Sent to all ${sent} players`;
+                msgEl.value = '';
+                showToast(`Sent to ${sent} players ✓`, 'success');
+            } else {
+                statusEl.textContent = `✓ ${sent} sent, ✗ ${failed} failed — check console`;
+                showToast(`${sent} sent, ${failed} failed`, 'warning', 5000);
+            }
+        }
+
+        async function sendSMS(teamIndex, playerIndex) {
             const player = teamRosters[teamIndex].players[playerIndex];
-            
+
             if (!player.phone) {
                 showToast('No phone number on file for this player', 'warning');
                 return;
             }
-
             if (event.teams.length === 0) {
                 showToast('Please create the event first before sending updates', 'warning');
                 return;
             }
 
             const message = generateEventSummary(teamIndex, playerIndex);
-            const phoneNumber = player.phone.replace(/\D/g, ''); // Remove non-digits
-            const smsLink = `sms:${phoneNumber}?body=${encodeURIComponent(message)}`;
-            
-            window.open(smsLink, '_blank');
+            const phoneNumber = player.phone.replace(/\D/g, '');
+
+            showToast(`Sending to ${player.name}…`, 'info', 2000);
+
+            try {
+                const resp = await fetch('/.netlify/functions/sms', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ to: phoneNumber, message })
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || 'Send failed');
+                showToast(`Sent to ${player.name} ✓`, 'success');
+            } catch (err) {
+                console.error('SMS error:', err);
+                showToast(`Failed to send: ${err.message}`, 'error', 5000);
+            }
         }
 
         function generateEventSummary(teamIndex, playerIndex) {
@@ -1109,19 +1200,19 @@
             
             // Find matches this player is in
             const playerMatches = [];
-            event.rounds.forEach((round, dayIdx) => {
+            event.rounds.forEach((round, roundIdx) => {
                 round.matches.forEach((match, matchIdx) => {
                     const isInMatch = match.team0Players.some(p => p === player.name) || 
                                      match.team1Players.some(p => p === player.name);
                     if (isInMatch) {
-                        playerMatches.push({ day, match, dayIdx });
+                        playerMatches.push({ round, match, roundIdx });
                     }
                 });
             });
 
             if (playerMatches.length > 0) {
                 message += `📅 YOUR MATCHES:\n`;
-                playerMatches.forEach(({ day, match }) => {
+                playerMatches.forEach(({ round, match }) => {
                     const isTeam0 = match.team0Players.some(p => p === player.name);
                     const teammates = isTeam0 ? match.team0Players : match.team1Players;
                     const opponents = isTeam0 ? match.team1Players : match.team0Players;
@@ -1149,7 +1240,11 @@
                 });
             }
             
-            message += `\n⛳ Good luck!`;
+            message += `\n⛳ Good luck!\n`;
+            // Direct link to live scoreboard for this event
+            const appUrl = window.location.origin + window.location.pathname;
+            const deeplink = appUrl + '?event=' + encodeURIComponent(event.name) + '&tab=livescoreboard';
+            message += `\n📊 Live Scoreboard:\n` + deeplink;
             
             return message;
         }
@@ -1292,12 +1387,7 @@
                 return;
             }
 
-            let html = `
-                <div class="live-header">
-                    <h2 style="margin-bottom: 10px;">📱 Live Scoring</h2>
-                    <p>Enter scores hole-by-hole on the course</p>
-                </div>
-            `;
+            let html = '';
 
             // Match selection
             if (currentLiveMatch === null || currentLiveRound === null) {
@@ -1421,54 +1511,83 @@
                 }
             }
 
+            // Build sticky bar context — course name, date, hole info
+            const stickyContext = (() => {
+                const course = getCourseForRound(currentLiveRound);
+                const roundDate = round.date
+                    ? new Date(round.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                    : null;
+                const contextParts = [];
+                if (course) contextParts.push(`⛳ ${course.name}`);
+                if (roundDate) contextParts.push(`📅 ${roundDate}`);
+                return contextParts.length
+                    ? `<div style="font-size:0.8em;opacity:0.85;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${contextParts.join('  ·  ')}</div>`
+                    : '';
+            })();
+
+            const stickyHoleInfo = (() => {
+                const course = getCourseForRound(currentLiveRound);
+                if (!course) return '';
+                const holeData = course.holes[currentLiveHole - 1];
+                if (!holeData) return '';
+                const yds = holeData.yardageBlue || holeData.yardage || holeData.yardageWhite || '';
+                return `<span style="background:rgba(255,255,255,0.2);padding:2px 8px;border-radius:10px;font-size:0.8em;font-weight:700;">Par ${holeData.par}</span>` +
+                       (yds ? `<span style="background:rgba(255,255,255,0.15);padding:2px 8px;border-radius:10px;font-size:0.8em;">${yds}y</span>` : '') +
+                       (holeData.handicap ? `<span style="background:rgba(255,255,255,0.15);padding:2px 8px;border-radius:10px;font-size:0.8em;">HCP${holeData.handicap}</span>` : '');
+            })();
+
+            const statusBg = matchStatus
+                ? (liveData.hasScores && event.scoringType !== 'stroke' ? (() => {
+                    const r = calculateMatchPlayResult(liveData);
+                    return r.result === 0 ? '#2980b9' : r.result === 1 ? '#c0392b' : '#e67e22';
+                  })() : '#2980b9')
+                : '#34495e';
+
             let html = `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <button class="btn btn-secondary" onclick="exitLiveScoring()">← Back to Matches</button>
-                    <div style="text-align: right;">
-                        <div style="font-weight: 600; color: #2c3e50;">Round ${round.roundNumber} - ${round.format}${round.date ? ' (' + new Date(round.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ')' : ''}</div>
-                        ${(() => { const c = getCourseForRound(currentLiveRound); return c ? `<div style="font-size:0.85em;color:#27ae60;font-weight:600;">⛳ ${c.name}</div>` : ''; })()}
-                        <div style="font-size: 0.9em; color: #7f8c8d;">${match.team0Players.join(' & ')} vs ${match.team1Players.join(' & ')}</div>
+                <div style="position:sticky;top:var(--banner-h);z-index:800;background:#2c3e50;color:white;
+                            padding:10px 14px;margin:-20px -20px 16px -20px;
+                            box-shadow:0 3px 12px rgba(0,0,0,0.3);">
+
+                    ${stickyContext}
+                    <!-- Row 1: back button + hole number + next/prev -->
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                        <button onclick="exitLiveScoring()"
+                                style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);
+                                       color:white;border-radius:10px;padding:12px 14px;font-size:0.9em;font-weight:600;
+                                       cursor:pointer;white-space:nowrap;flex-shrink:0;min-height:48px;
+                                       touch-action:manipulation;">All Matches</button>
+                        <button onclick="changeHole(-1)" ${currentLiveHole === 1 ? 'disabled' : ''}
+                                style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);
+                                       color:white;border-radius:10px;padding:12px 18px;font-size:1.4em;font-weight:700;
+                                       cursor:pointer;flex-shrink:0;min-height:48px;min-width:48px;
+                                       touch-action:manipulation;${currentLiveHole === 1 ? 'opacity:0.3;' : ''}">‹</button>
+                        <div style="flex:1;text-align:center;">
+                            <span style="font-size:1.5em;font-weight:800;letter-spacing:-0.5px;">Hole ${currentLiveHole}</span>
+                            <span style="font-size:0.75em;opacity:0.6;margin-left:4px;">/ 18</span>
+                        </div>
+                        <button onclick="changeHole(1)" ${currentLiveHole === 18 ? 'disabled' : ''}
+                                style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);
+                                       color:white;border-radius:10px;padding:12px 18px;font-size:1.4em;font-weight:700;
+                                       cursor:pointer;flex-shrink:0;min-height:48px;min-width:48px;
+                                       touch-action:manipulation;${currentLiveHole === 18 ? 'opacity:0.3;' : ''}">›</button>
+                    </div>
+
+                    <!-- Row 2: hole info badges + match status -->
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                        ${stickyHoleInfo}
+                        ${matchStatus ? `
+                        <div style="margin-left:auto;background:${statusBg};
+                                    padding:3px 12px;border-radius:12px;font-weight:700;
+                                    font-size:0.82em;white-space:nowrap;">
+                            ${matchStatus}
+                        </div>` : ''}
                     </div>
                 </div>
             `;
 
-            // Match status
-            if (matchStatus) {
-                html += `
-                    <div style="text-align: center; padding: 15px; background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); color: white; border-radius: 8px; font-weight: 600; font-size: 1.2em; margin-bottom: 20px;">
-                        ${matchStatus}
-                    </div>
-                `;
-            }
-
-            // Hole navigation
+            // Hole picker grid
             html += `
-                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <button class="btn btn-secondary" onclick="changeHole(-1)" ${currentLiveHole === 1 ? 'disabled' : ''} style="padding: 10px 20px;">
-                            ← Previous
-                        </button>
-                        <div style="text-align: center;">
-                            <div style="font-size: 1.5em; font-weight: 700; color: #2c3e50;">
-                                Hole ${currentLiveHole}
-                            </div>
-                            ${(() => {
-                                const course = getCourseForRound(currentLiveRound);
-                                if (!course) return '';
-                                const holeData = course.holes[currentLiveHole - 1];
-                                if (!holeData) return '';
-                                const yds = holeData.yardageBlue || holeData.yardage || holeData.yardageWhite || '';
-                                return `<div style="display:flex;gap:10px;justify-content:center;margin-top:4px;">
-                                    <span style="background:#2c3e50;color:white;padding:2px 10px;border-radius:12px;font-size:0.85em;font-weight:700;">Par ${holeData.par}</span>
-                                    ${yds ? `<span style="background:#2980b9;color:white;padding:2px 10px;border-radius:12px;font-size:0.85em;">${yds} yds</span>` : ''}
-                                    ${holeData.handicap ? `<span style="background:#7f8c8d;color:white;padding:2px 10px;border-radius:12px;font-size:0.85em;">HCP ${holeData.handicap}</span>` : ''}
-                                </div>`;
-                            })()}
-                        </div>
-                        <button class="btn btn-secondary" onclick="changeHole(1)" ${currentLiveHole === 18 ? 'disabled' : ''} style="padding: 10px 20px;">
-                            Next →
-                        </button>
-                    </div>
+                <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin-bottom: 16px; margin-top: 8px;">
                     <div style="display: grid; grid-template-columns: repeat(9, 1fr); gap: 5px; margin-bottom: 10px;">
             `;
 
@@ -3204,44 +3323,18 @@
                         
                         console.log('Round payload:', roundPayload);
                         
-                        let savedRound, roundError;
-                        
-                        if (roundId !== null) {
-                            // Update existing round - try round_id first, then id
-                            let result = await supabaseClient
-                                .from('rounds')
-                                .update(roundPayload)
-                                .eq('round_id', roundId)
-                                .select()
-                                .single();
-                            
-                            if (result.error && result.error.code === '42703') {
-                                result = await supabaseClient
-                                    .from('rounds')
-                                    .update(roundPayload)
-                                    .eq('id', roundId)
-                                    .select()
-                                    .single();
-                            }
-                            
-                            savedRound = result.data;
-                            roundError = result.error;
-                        } else {
-                            // Insert new round
-                            const result = await supabaseClient
-                                .from('rounds')
-                                .insert(roundPayload)
-                                .select()
-                                .single();
-                            savedRound = result.data;
-                            roundError = result.error;
-                        }
+                        // Upsert round on natural unique key (event_id + round_number)
+                        // Prevents 23505 when round ID is lost between sessions
+                        const { data: savedRound, error: roundError } = await supabaseClient
+                            .from('rounds')
+                            .upsert(roundPayload, { onConflict: 'event_id,round_number', ignoreDuplicates: false })
+                            .select()
+                            .single();
                         
                         if (roundError) {
                             console.error('Round save error:', roundError);
-                            throw roundError; // Stop if round save fails
+                            throw roundError;
                         }
-                        
                         if (!savedRound) {
                             throw new Error('Round save returned null');
                         }
@@ -3289,44 +3382,55 @@
                                     matchPayload.margin_of_victory = match.marginOfVictory;
                                 }
                                 
+                                // If we have a known DB id, UPDATE directly to avoid any constraint issues.
+                                // Otherwise INSERT — if that hits a conflict, swallow it and fetch the existing row.
                                 let savedMatch, matchError;
-                                
                                 if (matchId !== null) {
-                                    // Update existing match - try match_id first, then id
+                                    // Known row — update by id
                                     let result = await supabaseClient
                                         .from('matches')
                                         .update(matchPayload)
-                                        .eq('match_id', matchId)
+                                        .eq('id', matchId)
                                         .select()
                                         .single();
-                                    
                                     if (result.error && result.error.code === '42703') {
                                         result = await supabaseClient
                                             .from('matches')
                                             .update(matchPayload)
-                                            .eq('id', matchId)
+                                            .eq('match_id', matchId)
                                             .select()
                                             .single();
                                     }
-                                    
                                     savedMatch = result.data;
                                     matchError = result.error;
                                 } else {
-                                    // Insert new match
+                                    // New match — insert, but recover gracefully from duplicate
                                     const result = await supabaseClient
                                         .from('matches')
                                         .insert(matchPayload)
                                         .select()
                                         .single();
-                                    savedMatch = result.data;
-                                    matchError = result.error;
+                                    if (result.error && result.error.code === '23505') {
+                                        // Row already exists — fetch it by round_id + teams
+                                        const { data: existing } = await supabaseClient
+                                            .from('matches')
+                                            .select()
+                                            .eq('round_id', dbRoundId)
+                                            .eq('team_0_id', matchPayload.team_0_id)
+                                            .eq('team_1_id', matchPayload.team_1_id)
+                                            .single();
+                                        savedMatch = existing;
+                                        matchError = null;
+                                    } else {
+                                        savedMatch = result.data;
+                                        matchError = result.error;
+                                    }
                                 }
                                 
                                 if (matchError) {
                                     console.error('Match save error:', matchError);
                                     throw matchError;
                                 }
-                                
                                 if (!savedMatch) {
                                     throw new Error('Match save returned null');
                                 }
