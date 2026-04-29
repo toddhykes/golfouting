@@ -999,10 +999,24 @@
                 showToast('Please enter a player name', 'warning');
                 return;
             }
-            
+
+            // SMS compliance: explicit consent required before storing a phone number
+            let smsConsent = false;
+            if (playerPhone) {
+                smsConsent = confirm(
+                    `Has ${playerName} given you permission to send them text messages about this golf event?\n\n` +
+                    `By clicking OK, you confirm that ${playerName} has consented to receive SMS messages ` +
+                    `for event updates, schedules, and scoring. They can reply STOP at any time to opt out.\n\n` +
+                    `Click Cancel to add ${playerName} without a phone number.`
+                );
+            }
+
             teamRosters[teamIndex].players.push({
                 name: playerName,
-                phone: playerPhone || null
+                phone: smsConsent ? playerPhone : null,
+                smsConsent: smsConsent,
+                smsConsentDate: smsConsent ? new Date().toISOString() : null,
+                smsOptedOut: false
             });
             
             document.getElementById(inputId).value = '';
@@ -1071,10 +1085,10 @@
                                 <strong>${player.name}</strong>
                                 ${isCaptain ? '<span class="captain-badge">CAPTAIN</span>' : ''}
                             </div>
-                            ${player.phone ? `<div style="color: #7f8c8d; font-size: 0.9em; margin-top: 4px;">📱 ${player.phone}</div>` : ''}
+                            ${player.phone ? `<div style="color: #7f8c8d; font-size: 0.9em; margin-top: 4px;">📱 ${player.phone}${player.smsOptedOut ? ' <span style=\'color:#e74c3c;\'>(opted out)</span>' : player.smsConsent ? ' <span style=\'color:#27ae60;\' title=\'Consent on file\'>✓</span>' : ''}</div>` : ''}
                         </div>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end;">
-                            ${player.phone ? `<button class="btn btn-secondary" onclick="sendSMS(${teamIndex}, ${index})" style="padding: 6px 12px; font-size: 14px;">📱 SMS</button>` : ''}
+                            ${player.phone ? `<button class="btn btn-secondary" onclick="sendSMS(${teamIndex}, ${index})" style="padding: 6px 12px; font-size: 14px;">📱 SMS</button> <button class="btn btn-secondary" onclick="togglePlayerOptOut(${teamIndex}, ${index})" style="padding: 6px 10px; font-size: 12px;" title="Toggle opt-out status">${player.smsOptedOut ? '↺ Opt In' : '🚫 Opt Out'}</button>` : `<button class="btn btn-secondary" onclick="addPhoneToPlayer(${teamIndex}, ${index})" style="padding: 6px 12px; font-size: 14px;">📱 Add Phone</button>`}
                             ${!isCaptain ? `<button class="btn btn-secondary" onclick="setCaptain(${teamIndex}, ${index})" style="padding: 6px 12px; font-size: 14px;">Make Captain</button>` : ''}
                             <button class="btn btn-danger" onclick="removePlayer(${teamIndex}, ${index})" style="padding: 6px 12px; font-size: 14px;">Remove</button>
                         </div>
@@ -1104,25 +1118,32 @@
                 return;
             }
 
-            // Collect all unique phone numbers from both rosters
+            // Collect unique phone numbers — only players with explicit consent and not opted out
             const recipients = [];
+            let skippedNoConsent = 0;
+            let skippedOptOut = 0;
             teamRosters.forEach(roster => {
                 roster.players.forEach(player => {
-                    if (player.phone) {
-                        const digits = player.phone.replace(/\D/g, '');
-                        if (digits.length >= 10 && !recipients.find(r => r.digits === digits)) {
-                            recipients.push({ name: player.name, digits });
-                        }
+                    if (!player.phone) return;
+                    if (player.smsOptedOut) { skippedOptOut++; return; }
+                    if (!player.smsConsent) { skippedNoConsent++; return; }
+                    const digits = player.phone.replace(/\D/g, '');
+                    if (digits.length >= 10 && !recipients.find(r => r.digits === digits)) {
+                        recipients.push({ name: player.name, digits });
                     }
                 });
             });
 
             if (recipients.length === 0) {
-                showToast('No phone numbers on file', 'warning');
+                let msg = 'No eligible recipients';
+                if (skippedNoConsent) msg += ` (${skippedNoConsent} without consent)`;
+                if (skippedOptOut) msg += ` (${skippedOptOut} opted out)`;
+                showToast(msg, 'warning', 4000);
                 return;
             }
 
-            const fullMessage = `${userText}\n\n— ${event.name}`;
+            // Append compliance footer for A2P 10DLC
+            const fullMessage = `${userText}\n\n— ${event.name}\nReply STOP to unsubscribe, HELP for help.`;
             statusEl.textContent = `Sending to ${recipients.length} player${recipients.length !== 1 ? 's' : ''}…`;
 
             let sent = 0, failed = 0;
@@ -1153,6 +1174,51 @@
             }
         }
 
+        function addPhoneToPlayer(teamIndex, playerIndex) {
+            const player = teamRosters[teamIndex].players[playerIndex];
+            const phone = prompt(`Enter phone number for ${player.name}:`);
+            if (!phone) return;
+            const trimmed = phone.trim();
+            if (!trimmed) return;
+            // Basic validation — at least 10 digits
+            if (trimmed.replace(/\D/g, '').length < 10) {
+                showToast('Phone number must be at least 10 digits', 'warning');
+                return;
+            }
+            // Consent confirmation
+            const consented = confirm(
+                `Has ${player.name} given you permission to send them text messages about this golf event?\n\n` +
+                `By clicking OK, you confirm consent has been obtained. They can reply STOP to opt out.`
+            );
+            if (!consented) {
+                showToast('Phone not added — consent required', 'info');
+                return;
+            }
+            player.phone = trimmed;
+            player.smsConsent = true;
+            player.smsConsentDate = new Date().toISOString();
+            player.smsOptedOut = false;
+            renderRoster(teamIndex);
+            if (event.name) saveCurrentEvent({ blobOnly: true });
+            showToast(`Phone added for ${player.name} ✓`, 'success');
+        }
+
+        function togglePlayerOptOut(teamIndex, playerIndex) {
+            const player = teamRosters[teamIndex].players[playerIndex];
+            if (player.smsOptedOut) {
+                if (!confirm(`Mark ${player.name} as opted back IN to SMS? Only do this if they have re-consented.`)) return;
+                player.smsOptedOut = false;
+                player.smsConsent = true;
+                player.smsConsentDate = new Date().toISOString();
+                showToast(`${player.name} opted in`, 'success');
+            } else {
+                player.smsOptedOut = true;
+                showToast(`${player.name} opted out`, 'info');
+            }
+            renderRoster(teamIndex);
+            if (event.name) saveCurrentEvent({ blobOnly: true });
+        }
+
         async function sendSMS(teamIndex, playerIndex) {
             const player = teamRosters[teamIndex].players[playerIndex];
 
@@ -1160,12 +1226,30 @@
                 showToast('No phone number on file for this player', 'warning');
                 return;
             }
+            if (player.smsOptedOut) {
+                showToast(`${player.name} has opted out of SMS`, 'warning');
+                return;
+            }
+            if (!player.smsConsent) {
+                const grant = confirm(
+                    `${player.name} does not have SMS consent on file.\n\n` +
+                    `By clicking OK, you confirm that ${player.name} has given you permission ` +
+                    `to send them text messages about this golf event.`
+                );
+                if (!grant) return;
+                player.smsConsent = true;
+                player.smsConsentDate = new Date().toISOString();
+                saveCurrentEvent({ blobOnly: true });
+                renderRoster(teamIndex);
+            }
             if (event.teams.length === 0) {
                 showToast('Please create the event first before sending updates', 'warning');
                 return;
             }
 
-            const message = generateEventSummary(teamIndex, playerIndex);
+            // Append compliance footer to every SMS
+            const baseMessage = generateEventSummary(teamIndex, playerIndex);
+            const message = baseMessage + `\n\nReply STOP to unsubscribe, HELP for help.`;
             const phoneNumber = player.phone.replace(/\D/g, '');
 
             showToast(`Sending to ${player.name}…`, 'info', 2000);
