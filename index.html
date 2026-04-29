@@ -284,6 +284,10 @@
             body { padding: 30px; }
             .content { padding: 30px; }
         }
+        .policy-section { margin-bottom: 24px; }
+        .policy-section h3 { color: #2c3e50; margin-bottom: 12px; font-size: 1.05em; }
+        .policy-section ul { margin: 0; padding-left: 20px; }
+        .policy-section li { margin-bottom: 8px; line-height: 1.4; }
     </style>
 
     <!-- Supabase SDK -->
@@ -354,6 +358,7 @@
                 <button class="tab" onclick="switchTab('live', event)">Live Scoring</button>
                 <button class="tab" onclick="switchTab('standings', event)">Standings</button>
                 <button class="tab" onclick="switchTab('kickouts', event)">Kickouts</button>
+                <button class="tab" onclick="switchTab('privacy', event)">SMS Privacy</button>
             </div>
 
             <!-- Setup Tab -->
@@ -536,6 +541,73 @@
                     <div class="empty-state-icon">👊</div>
                     <h3>No Kickouts Yet</h3>
                     <p>Track kickouts during live scoring</p>
+                </div>
+            </div>
+
+            <div id="privacy" class="tab-content">
+                <div style="max-width: 700px; margin: 0 auto; padding: 20px;">
+                    <h2 style="color: #2c3e50; margin-bottom: 20px;">📱 SMS Privacy & Terms</h2>
+                    
+                    <div style="background: #e8f5e8; border: 2px solid #27ae60; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+                        <h3 style="color: #27ae60; margin: 0 0 8px 0; font-size: 1.1em;">🛡️ Your Privacy is Protected</h3>
+                        <p style="margin: 0;">We only use your phone number to send you updates about your current golf outing. No marketing, no sharing, no nonsense.</p>
+                    </div>
+
+                    <div class="policy-section">
+                        <h3>📞 What We Text You About</h3>
+                        <ul>
+                            <li>Event updates, schedules, and tee times</li>
+                            <li>Live scoring updates during your round</li>
+                            <li>Final results and leaderboards</li>
+                            <li>Important announcements about your outing</li>
+                        </ul>
+                    </div>
+
+                    <div class="policy-section">
+                        <h3>🔒 How We Protect Your Information</h3>
+                        <ul>
+                            <li><strong>No sharing:</strong> Your phone number stays private and is never shared with third parties</li>
+                            <li><strong>No marketing:</strong> We will never send promotional or marketing messages</li>
+                            <li><strong>Event-specific:</strong> Your number is only used for the golf outing you signed up for</li>
+                            <li><strong>Secure storage:</strong> All data is encrypted and stored securely</li>
+                        </ul>
+                    </div>
+
+                    <div class="policy-section">
+                        <h3>✋ Your Control</h3>
+                        <ul>
+                            <li><strong>Opt out anytime:</strong> Reply STOP to any message to unsubscribe immediately</li>
+                            <li><strong>Get help:</strong> Reply HELP to any message for assistance</li>
+                            <li><strong>Re-subscribe:</strong> Reply START to opt back in if you change your mind</li>
+                            <li><strong>Event organizer:</strong> Contact your organizer directly to update your preferences</li>
+                        </ul>
+                    </div>
+
+                    <div class="policy-section">
+                        <h3>💰 Costs & Frequency</h3>
+                        <ul>
+                            <li><strong>Message rates:</strong> Standard message and data rates may apply from your carrier</li>
+                            <li><strong>Frequency:</strong> Typically 1-5 messages per golf outing</li>
+                            <li><strong>Free service:</strong> This golf tracking service itself is free to use</li>
+                        </ul>
+                    </div>
+
+                    <div style="background: #f8f9fa; border-left: 4px solid #3498db; padding: 16px; margin-top: 20px;">
+                        <h4 style="margin: 0 0 8px 0; color: #3498db;">📋 Terms Summary</h4>
+                        <p style="margin: 0; font-size: 0.9em; line-height: 1.4;">
+                            By providing your phone number, you consent to receive text messages about your golf outing. 
+                            Messages are sent via automated system. Consent is not required to participate in the golf outing. 
+                            Message frequency varies. Reply STOP to opt out or HELP for assistance. 
+                            Message and data rates may apply.
+                        </p>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 24px; padding: 16px; background: #ffffff; border: 2px solid #e5e5e5; border-radius: 8px;">
+                        <p style="margin: 0; color: #7f8c8d; font-size: 0.85em;">
+                            Questions about SMS messaging? Contact your event organizer.<br>
+                            Last updated: April 2024
+                        </p>
+                    </div>
                 </div>
             </div>
 
@@ -989,7 +1061,7 @@
             switchTab('teams');
         }
 
-        function addPlayer(teamIndex) {
+        async function addPlayer(teamIndex) {
             const inputId = `team${teamIndex}NewPlayer`;
             const phoneId = `team${teamIndex}NewPhone`;
             const playerName = document.getElementById(inputId).value.trim();
@@ -1146,35 +1218,47 @@
             const fullMessage = `${userText}\n\n— ${event.name}\nReply STOP to unsubscribe, HELP for help.`;
             statusEl.textContent = `Sending to ${recipients.length} player${recipients.length !== 1 ? 's' : ''}…`;
 
-            let sent = 0, failed = 0;
-            for (const r of recipients) {
-                try {
-                    const resp = await fetch('/.netlify/functions/sms', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ to: r.digits, message: fullMessage })
-                    });
-                    const data = await resp.json();
-                    if (!resp.ok) throw new Error(data.error || 'failed');
-                    sent++;
-                    statusEl.textContent = `Sent ${sent} / ${recipients.length}…`;
-                } catch (err) {
-                    failed++;
-                    console.error(`SMS to ${r.name} failed:`, err);
+            if (window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                // Local development — open SMS apps one by one (not ideal but functional)
+                for (const r of recipients) {
+                    const smsLink = `sms:${r.digits}?body=${encodeURIComponent(fullMessage)}`;
+                    if (confirm(`Open SMS app for ${r.name}? (${recipients.indexOf(r) + 1}/${recipients.length})`)) {
+                        window.open(smsLink);
+                    }
                 }
-            }
-
-            if (failed === 0) {
-                statusEl.textContent = `✓ Sent to all ${sent} players`;
-                msgEl.value = '';
-                showToast(`Sent to ${sent} players ✓`, 'success');
+                statusEl.textContent = `Opened ${recipients.length} SMS apps`;
+                showToast('SMS apps opened', 'info');
             } else {
-                statusEl.textContent = `✓ ${sent} sent, ✗ ${failed} failed — check console`;
-                showToast(`${sent} sent, ${failed} failed`, 'warning', 5000);
+                // Deployed — use Twilio
+                let sent = 0, failed = 0;
+                for (const r of recipients) {
+                    try {
+                        const resp = await fetch('/.netlify/functions/sms', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ to: r.digits, message: fullMessage })
+                        });
+                        const data = await resp.json();
+                        if (!resp.ok) throw new Error(data.error || 'failed');
+                        sent++;
+                        statusEl.textContent = `Sent ${sent} / ${recipients.length}…`;
+                    } catch (err) {
+                        failed++;
+                        console.error(`SMS to ${r.name} failed:`, err);
+                    }
+                }
+                if (failed === 0) {
+                    statusEl.textContent = `✓ Sent to all ${sent} players`;
+                    msgEl.value = '';
+                    showToast(`Sent to ${sent} players ✓`, 'success');
+                } else {
+                    statusEl.textContent = `✓ ${sent} sent, ✗ ${failed} failed — check console`;
+                    showToast(`${sent} sent, ${failed} failed`, 'warning', 5000);
+                }
             }
         }
 
-        function addPhoneToPlayer(teamIndex, playerIndex) {
+        async function addPhoneToPlayer(teamIndex, playerIndex) {
             const player = teamRosters[teamIndex].players[playerIndex];
             const phone = prompt(`Enter phone number for ${player.name}:`);
             if (!phone) return;
@@ -1203,7 +1287,7 @@
             showToast(`Phone added for ${player.name} ✓`, 'success');
         }
 
-        function togglePlayerOptOut(teamIndex, playerIndex) {
+        async function togglePlayerOptOut(teamIndex, playerIndex) {
             const player = teamRosters[teamIndex].players[playerIndex];
             if (player.smsOptedOut) {
                 if (!confirm(`Mark ${player.name} as opted back IN to SMS? Only do this if they have re-consented.`)) return;
@@ -1254,18 +1338,27 @@
 
             showToast(`Sending to ${player.name}…`, 'info', 2000);
 
-            try {
-                const resp = await fetch('/.netlify/functions/sms', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ to: phoneNumber, message })
-                });
-                const data = await resp.json();
-                if (!resp.ok) throw new Error(data.error || 'Send failed');
-                showToast(`Sent to ${player.name} ✓`, 'success');
-            } catch (err) {
-                console.error('SMS error:', err);
-                showToast(`Failed to send: ${err.message}`, 'error', 5000);
+            // Use Netlify function when deployed, fallback to sms: URI when local
+            if (window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                // Local development — use device SMS app
+                const smsLink = `sms:${phoneNumber}?body=${encodeURIComponent(message)}`;
+                window.location.href = smsLink;
+                showToast(`Opened SMS app for ${player.name}`, 'info');
+            } else {
+                // Deployed — use Twilio via Netlify function
+                try {
+                    const resp = await fetch('/.netlify/functions/sms', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ to: phoneNumber, message })
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok) throw new Error(data.error || 'Send failed');
+                    showToast(`Sent to ${player.name} ✓`, 'success');
+                } catch (err) {
+                    console.error('SMS error:', err);
+                    showToast(`Failed to send: ${err.message}`, 'error', 5000);
+                }
             }
         }
 
@@ -3823,11 +3916,22 @@
             renderEventsList(savedEvents);
         }
         
-        function clearLocalStorage() {
-            if (!confirm('Clear all local events? This will remove events stored on this device.\n\n' +
-                         'Note: Events saved to Supabase will NOT be deleted and will still be accessible.')) {
-                return;
-            }
+        async function clearLocalStorage() {
+            const shouldClear = await showCustomModal(
+                '🗑️ Clear Local Cache',
+                `<p>Clear all events stored locally on this device?</p>
+                 <div style="background:#fff3cd;border:1px solid #ffeaa7;padding:12px;border-radius:8px;margin:12px 0;">
+                     <strong>What this does:</strong><br>
+                     • Removes events stored on this device<br>
+                     • Clears temporary data and settings
+                 </div>
+                 <div style="background:#e8f5e8;border:1px solid #c3e6c3;padding:12px;border-radius:8px;margin:12px 0;">
+                     <strong>✅ Your cloud data is safe:</strong><br>
+                     Events saved to Supabase will remain untouched and can be reloaded.
+                 </div>`,
+                'Clear Local Data', 'Keep Data'
+            );
+            if (!shouldClear) return;
             
             localStorage.removeItem('golfEvents');
             console.log('localStorage cleared');
