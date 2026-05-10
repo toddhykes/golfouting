@@ -2402,11 +2402,42 @@
             });
         }
 
+        function findFirstIncompleteHole(roundIndex, matchIndex) {
+            const match = event.rounds[roundIndex].matches[matchIndex];
+            const liveScores = event.liveScores[roundIndex][matchIndex];
+            
+            // Get all players in the match
+            const allPlayers = [...match.team0Players, ...match.team1Players];
+            
+            // Check each hole from 1 to 18
+            for (let hole = 1; hole <= 18; hole++) {
+                const holeIndex = hole - 1;
+                
+                // Check if any player is missing a score for this hole
+                const hasIncompleteScores = allPlayers.some(player => {
+                    const playerScores = liveScores[player];
+                    return !playerScores || playerScores[holeIndex] === null || playerScores[holeIndex] === undefined;
+                });
+                
+                if (hasIncompleteScores) {
+                    return hole; // Found first hole with missing scores
+                }
+            }
+            
+            // All holes are complete, go to hole 18
+            return 18;
+        }
+
         function selectLiveMatch(roundIndex, matchIndex) {
             currentLiveRound = roundIndex;
             currentLiveMatch = matchIndex;
-            currentLiveHole = 1;
-            initLiveScores(roundIndex, matchIndex);  // init once here, not on every render
+            
+            // Initialize scores first, then find the right hole to navigate to
+            initLiveScores(roundIndex, matchIndex);
+            
+            // Navigate to first incomplete hole, or hole 18 if match is complete
+            currentLiveHole = findFirstIncompleteHole(roundIndex, matchIndex);
+            
             renderLiveScoring();
         }
 
