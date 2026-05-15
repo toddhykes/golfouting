@@ -718,7 +718,8 @@
                     // Ignore our own saves (within 3 seconds)
                     if (lastRealtimeUpdate && Date.now() - lastRealtimeUpdate < 3000) return;
 
-                    const updatedBlob = payload.new?.blob;
+                    // Data is stored in the event_data column as a JSON string
+                    const updatedBlob = payload.new?.event_data;
                     if (!updatedBlob) return;
 
                     try {
