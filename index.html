@@ -694,6 +694,68 @@
 
         const formats = ['Scramble', 'Alternate Shot', 'Best Ball', 'Individual'];
 
+        // ── Realtime state ───────────────────────────────────────────────────────
+        let realtimeChannel = null;
+        let lastRealtimeUpdate = null; // suppress echo of our own saves
+
+        function subscribeToRealtimeUpdates(eventId) {
+            if (!supabaseClient || !eventId || String(eventId).startsWith('local_')) return;
+
+            // Clean up any existing subscription first
+            if (realtimeChannel) {
+                supabaseClient.removeChannel(realtimeChannel);
+                realtimeChannel = null;
+            }
+
+            realtimeChannel = supabaseClient
+                .channel(`event-${eventId}`)
+                .on('postgres_changes', {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'events',
+                    filter: `id=eq.${eventId}`
+                }, async (payload) => {
+                    // Ignore our own saves (within 3 seconds)
+                    if (lastRealtimeUpdate && Date.now() - lastRealtimeUpdate < 3000) return;
+
+                    const updatedBlob = payload.new?.blob;
+                    if (!updatedBlob) return;
+
+                    try {
+                        const incoming = typeof updatedBlob === 'string' ? JSON.parse(updatedBlob) : updatedBlob;
+                        if (!incoming) return;
+
+                        // Merge scores and rounds from the incoming update
+                        if (incoming.liveScores) event.liveScores = incoming.liveScores;
+                        if (incoming.rounds) event.rounds = incoming.rounds;
+
+                        // Refresh all live views
+                        renderLiveScoring();
+                        renderLiveScoreboardTab();
+                        renderStandings();
+                        renderSombreros();
+                        renderKickouts();
+
+                        showToast('📡 Scores updated', 'info', 2000);
+                    } catch (err) {
+                        console.error('Realtime parse error:', err);
+                    }
+                })
+                .subscribe((status) => {
+                    if (status === 'SUBSCRIBED') {
+                        console.log(`📡 Realtime subscribed to event ${eventId}`);
+                        updateSupabaseStatusIndicator();
+                    }
+                });
+        }
+
+        function unsubscribeRealtime() {
+            if (realtimeChannel && supabaseClient) {
+                supabaseClient.removeChannel(realtimeChannel);
+                realtimeChannel = null;
+            }
+        }
+
         function updateEventBanner() {
             const banner = document.getElementById('eventBanner');
             const bannerName = document.getElementById('bannerName');
@@ -3710,6 +3772,7 @@
             
             // Also save to Supabase if enabled
             if (isSupabaseEnabled) {
+                lastRealtimeUpdate = Date.now(); // suppress echo of our own save
                 await saveEventToSupabase(eventToSave, opts);
             }
         }
@@ -3780,6 +3843,7 @@
                         const saved = getSavedEvents();
                         const idx = saved.findIndex(e => e.name === event.name);
                         if (idx >= 0) { saved[idx].id = dbEventId; localStorage.setItem('golfEvents', JSON.stringify(saved)); }
+                        subscribeToRealtimeUpdates(dbEventId); // start live updates now that we have a real DB id
                     }
                 }
 
@@ -4274,8 +4338,11 @@
             renderSombreros();
             
             updateEventBanner();
-            showToast(`Event "${event.name}" loaded ✓`, 'success');
-            switchTab('teams');
+            showToast(`Event "${event.name}" loaded ✓`, 'success')
+            if (event.id && !String(event.id).startsWith('local_')) {
+                subscribeToRealtimeUpdates(event.id);
+            }
+            switchTab('livescoreboard');
         }
 
         async function deleteSavedEvent(eventId) {
@@ -4401,7 +4468,10 @@
             const statusEl = document.getElementById('supabaseStatus');
             if (!statusEl) return;
             
-            if (isSupabaseEnabled) {
+            if (isSupabaseEnabled && realtimeChannel) {
+                statusEl.innerHTML = '☁️ Cloud Sync · 📡 Live updates on';
+                statusEl.style.color = '#2ecc71';
+            } else if (isSupabaseEnabled) {
                 statusEl.innerHTML = '☁️ Cloud Sync Enabled - Multi-device sync active';
                 statusEl.style.color = '#2ecc71';
             } else {
