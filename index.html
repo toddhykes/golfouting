@@ -1015,6 +1015,15 @@
             resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">⛳ Loading scorecard for ${course.name}...</div>`;
 
             try {
+                // Don't regenerate if already locked
+                const existingCourse = getStoredCourse(roundNum);
+                if (existingCourse && existingCourse.locked && existingCourse.name === course.name) {
+                    resultsEl.innerHTML = '';
+                    renderSelectedCourse(roundNum, existingCourse);
+                    showToast('Using saved scorecard (locked) ✓', 'info', 2000);
+                    return;
+                }
+
                 // Use Claude with the exact name + address from Google for an accurate scorecard
                 const raw = await callClaude(
                     `Provide the complete 18-hole scorecard for "${course.name}" located at "${course.address}". ` +
@@ -1057,54 +1066,114 @@
             }
         }
 
-        function renderSelectedCourse(roundNum, course) {
+        function renderSelectedCourse(roundNum, course, editMode = false) {
             const el = document.getElementById(`courseSelected${roundNum}`);
             if (!el || !course) return;
 
-            const totalPar = course.holes.reduce((s,h) => s + h.par, 0);
-            const totalBlue = course.holes.reduce((s,h) => s + (h.yardageBlue||h.yardage||0), 0);
-            const totalWhite = course.holes.reduce((s,h) => s + (h.yardageWhite||0), 0);
+            const totalPar = course.holes.reduce((s,h) => s + (parseInt(h.par)||0), 0);
+            const totalBlue = course.holes.reduce((s,h) => s + (parseInt(h.yardageBlue||h.yardage)||0), 0);
+            const totalWhite = course.holes.reduce((s,h) => s + (parseInt(h.yardageWhite)||0), 0);
+            const isLocked = course.locked;
 
             let tableRows = '';
-            course.holes.forEach(h => {
-                tableRows += `<tr>
-                    <td style="font-weight:700;text-align:center;padding:4px 6px;background:#f8f9fa;">${h.hole}</td>
-                    <td style="text-align:center;padding:4px 6px;">${h.par}</td>
-                    <td style="text-align:center;padding:4px 6px;color:#2980b9;">${h.yardageBlue||h.yardage||'-'}</td>
-                    <td style="text-align:center;padding:4px 6px;color:#27ae60;">${h.yardageWhite||'-'}</td>
-                    <td style="text-align:center;padding:4px 6px;color:#e74c3c;">${h.yardageRed||'-'}</td>
-                    <td style="text-align:center;padding:4px 6px;color:#7f8c8d;">${h.handicap||'-'}</td>
-                </tr>`;
+            course.holes.forEach((h, i) => {
+                if (editMode) {
+                    tableRows += `<tr style="background:${i%2===0?'#fafafa':'white'};">
+                        <td style="font-weight:700;text-align:center;padding:4px 6px;background:#f0f0f0;">${h.hole}</td>
+                        <td style="padding:2px;"><input type="number" min="3" max="6" value="${h.par}"
+                            onchange="updateScorecardCell(${roundNum},${i},'par',this.value)"
+                            style="width:44px;text-align:center;border:2px solid #3498db;border-radius:4px;padding:2px;font-size:0.9em;"></td>
+                        <td style="padding:2px;"><input type="number" min="50" max="800" value="${h.yardageBlue||h.yardage||''}"
+                            onchange="updateScorecardCell(${roundNum},${i},'yardageBlue',this.value)"
+                            style="width:54px;text-align:center;border:2px solid #2980b9;border-radius:4px;padding:2px;font-size:0.9em;color:#2980b9;"></td>
+                        <td style="padding:2px;"><input type="number" min="50" max="800" value="${h.yardageWhite||''}"
+                            onchange="updateScorecardCell(${roundNum},${i},'yardageWhite',this.value)"
+                            style="width:54px;text-align:center;border:2px solid #27ae60;border-radius:4px;padding:2px;font-size:0.9em;color:#27ae60;"></td>
+                        <td style="padding:2px;"><input type="number" min="50" max="800" value="${h.yardageRed||''}"
+                            onchange="updateScorecardCell(${roundNum},${i},'yardageRed',this.value)"
+                            style="width:54px;text-align:center;border:2px solid #e74c3c;border-radius:4px;padding:2px;font-size:0.9em;color:#e74c3c;"></td>
+                        <td style="padding:2px;"><input type="number" min="1" max="18" value="${h.handicap||''}"
+                            onchange="updateScorecardCell(${roundNum},${i},'handicap',this.value)"
+                            style="width:44px;text-align:center;border:2px solid #95a5a6;border-radius:4px;padding:2px;font-size:0.9em;color:#7f8c8d;"></td>
+                    </tr>`;
+                } else {
+                    tableRows += `<tr style="background:${i%2===0?'#fafafa':'white'};">
+                        <td style="font-weight:700;text-align:center;padding:4px 6px;background:#f0f0f0;">${h.hole}</td>
+                        <td style="text-align:center;padding:4px 6px;">${h.par}</td>
+                        <td style="text-align:center;padding:4px 6px;color:#2980b9;">${h.yardageBlue||h.yardage||'-'}</td>
+                        <td style="text-align:center;padding:4px 6px;color:#27ae60;">${h.yardageWhite||'-'}</td>
+                        <td style="text-align:center;padding:4px 6px;color:#e74c3c;">${h.yardageRed||'-'}</td>
+                        <td style="text-align:center;padding:4px 6px;color:#7f8c8d;">${h.handicap||'-'}</td>
+                    </tr>`;
+                }
             });
 
+            const lockedBadge = isLocked 
+                ? `<span style="background:#27ae60;color:white;padding:2px 8px;border-radius:10px;font-size:0.75em;margin-left:8px;">🔒 Locked</span>`
+                : `<span style="background:#f39c12;color:white;padding:2px 8px;border-radius:10px;font-size:0.75em;margin-left:8px;">⚠️ Verify & Lock</span>`;
+
+            const actionButtons = editMode
+                ? `<button onclick="saveScorecardEdits(${roundNum})" 
+                       style="background:#27ae60;color:white;border:none;border-radius:4px;padding:6px 12px;cursor:pointer;font-size:0.85em;font-weight:600;margin-right:6px;">
+                       ✅ Save & Lock
+                   </button>
+                   <button onclick="renderSelectedCourse(${roundNum}, getStoredCourse(${roundNum}))"
+                       style="background:none;border:1px solid #e0e0e0;border-radius:4px;padding:6px 10px;cursor:pointer;color:#7f8c8d;font-size:0.85em;">
+                       Cancel
+                   </button>`
+                : `<button onclick="renderSelectedCourse(${roundNum}, getStoredCourse(${roundNum}), true)"
+                       style="background:#3498db;color:white;border:none;border-radius:4px;padding:6px 12px;cursor:pointer;font-size:0.85em;font-weight:600;margin-right:6px;">
+                       ✏️ Edit Scorecard
+                   </button>
+                   ${isLocked ? `<button onclick="unlockScorecard(${roundNum})"
+                       style="background:none;border:1px solid #f39c12;border-radius:4px;padding:6px 10px;cursor:pointer;color:#f39c12;font-size:0.85em;margin-right:6px;">
+                       🔓 Unlock
+                   </button>` : ''}
+                   <button onclick="clearCourse(${roundNum})" 
+                       style="background:none;border:1px solid #e0e0e0;border-radius:4px;padding:6px 10px;cursor:pointer;color:#7f8c8d;font-size:0.85em;">
+                       ✕ Change
+                   </button>`;
+
+            const headerNote = !isLocked && !editMode
+                ? `<div style="background:#fff3cd;border:1px solid #f39c12;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.85em;">
+                       ⚠️ <strong>Please verify this scorecard.</strong> AI-generated data may be inaccurate. 
+                       Click <strong>Edit Scorecard</strong> to correct any errors, then <strong>Save & Lock</strong> to prevent future changes.
+                   </div>`
+                : '';
+
             el.innerHTML = `
-                <div style="background:white;border:2px solid #2ecc71;border-radius:8px;padding:12px;margin-top:8px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="background:white;border:2px solid ${isLocked?'#27ae60':'#f39c12'};border-radius:8px;padding:12px;margin-top:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
                         <div>
-                            <div style="font-weight:700;color:#2c3e50;font-size:1.05em;">✅ ${course.name}</div>
-                            <div style="color:#7f8c8d;font-size:0.85em;">${course.city}, ${course.state} &bull; Par ${totalPar} &bull; ${totalBlue} yds (Blue)</div>
+                            <div style="font-weight:700;color:#2c3e50;font-size:1.05em;">
+                                ${isLocked?'✅':'⛳'} ${course.name} ${lockedBadge}
+                            </div>
+                            <div style="color:#7f8c8d;font-size:0.85em;">${course.city||''} ${course.state?', '+course.state:''} &bull; Par ${totalPar} &bull; ${totalBlue} yds (Blue)</div>
                         </div>
-                        <button onclick="clearCourse(${roundNum})" style="background:none;border:1px solid #e0e0e0;border-radius:4px;padding:4px 10px;cursor:pointer;color:#7f8c8d;font-size:0.85em;">✕ Change</button>
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                            ${actionButtons}
+                        </div>
                     </div>
+                    ${headerNote}
                     <div style="overflow-x:auto;">
                         <table style="width:100%;border-collapse:collapse;font-size:0.82em;">
                             <thead>
                                 <tr style="background:#2c3e50;color:white;">
                                     <th style="padding:5px 6px;text-align:center;">Hole</th>
                                     <th style="padding:5px 6px;text-align:center;">Par</th>
-                                    <th style="padding:5px 6px;text-align:center;">Blue</th>
-                                    <th style="padding:5px 6px;text-align:center;">White</th>
-                                    <th style="padding:5px 6px;text-align:center;">Red</th>
+                                    <th style="padding:5px 6px;text-align:center;color:#87ceeb;">Blue</th>
+                                    <th style="padding:5px 6px;text-align:center;color:#90ee90;">White</th>
+                                    <th style="padding:5px 6px;text-align:center;color:#ffb3ba;">Red</th>
                                     <th style="padding:5px 6px;text-align:center;">HCP</th>
                                 </tr>
                             </thead>
                             <tbody>${tableRows}</tbody>
                             <tfoot>
-                                <tr style="background:#f8f9fa;font-weight:700;">
+                                <tr style="background:#2c3e50;color:white;font-weight:700;">
                                     <td style="text-align:center;padding:5px 6px;">TOTAL</td>
                                     <td style="text-align:center;padding:5px 6px;">${totalPar}</td>
-                                    <td style="text-align:center;padding:5px 6px;color:#2980b9;">${totalBlue}</td>
-                                    <td style="text-align:center;padding:5px 6px;color:#27ae60;">${totalWhite||'-'}</td>
+                                    <td style="text-align:center;padding:5px 6px;color:#87ceeb;">${totalBlue}</td>
+                                    <td style="text-align:center;padding:5px 6px;color:#90ee90;">${totalWhite||'-'}</td>
                                     <td style="text-align:center;padding:5px 6px;"></td>
                                     <td style="text-align:center;padding:5px 6px;"></td>
                                 </tr>
@@ -1112,6 +1181,50 @@
                         </table>
                     </div>
                 </div>`;
+        }
+
+        function getStoredCourse(roundNum) {
+            const roundIndex = roundNum - 1;
+            return (event.rounds && event.rounds[roundIndex] && event.rounds[roundIndex].course) 
+                || (window._pendingCourses && window._pendingCourses[roundIndex])
+                || null;
+        }
+
+        function updateScorecardCell(roundNum, holeIndex, field, value) {
+            const course = getStoredCourse(roundNum);
+            if (!course) return;
+            const parsed = field === 'par' ? parseInt(value) : parseInt(value) || 0;
+            course.holes[holeIndex][field] = parsed;
+            if (field === 'yardageBlue') course.holes[holeIndex].yardage = parsed; // keep fallback in sync
+        }
+
+        function unlockScorecard(roundNum) {
+            const course = getStoredCourse(roundNum);
+            if (!course) return;
+            course.locked = false;
+            const roundIndex = roundNum - 1;
+            if (event.rounds && event.rounds[roundIndex]) {
+                event.rounds[roundIndex].course = course;
+            }
+            saveCurrentEvent();
+            renderSelectedCourse(roundNum, course);
+            showToast('Scorecard unlocked — remember to re-lock after editing', 'info', 3000);
+        }
+
+        function saveScorecardEdits(roundNum) {
+            const course = getStoredCourse(roundNum);
+            if (!course) return;
+            course.locked = true;
+            const roundIndex = roundNum - 1;
+            if (event.rounds && event.rounds[roundIndex]) {
+                event.rounds[roundIndex].course = course;
+            } else {
+                if (!window._pendingCourses) window._pendingCourses = {};
+                window._pendingCourses[roundIndex] = course;
+            }
+            saveCurrentEvent();
+            renderSelectedCourse(roundNum, course);
+            showToast('Scorecard saved and locked ✓', 'success', 3000);
         }
 
         function clearCourse(roundNum) {
