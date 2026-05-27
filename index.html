@@ -1146,20 +1146,44 @@
                     </div>`;
 
                     const raw = await callClaude(
-                        `Provide the complete 18-hole scorecard for "${course.name}" located at "${course.address}". ` +
-                        `IMPORTANT: Only return data you are highly confident is accurate for this specific course. ` +
-                        `Return ONLY valid JSON, no other text: ` +
-                        `{"name":"${course.name}","city":"${course.city}","state":"${course.state}","address":"${course.address}",` +
-                        `"holes":[{"hole":1,"par":4,"yardageBlue":380,"yardageWhite":360,"yardageRed":320,"handicap":5},...all 18 holes]}. ` +
-                        `yardageBlue=back tees, yardageWhite=middle tees, yardageRed=forward tees. Include all 18 holes.`
+                        `You are a JSON API. Return ONLY a single valid JSON object — no explanation, no markdown, no backticks, no prose before or after.
+
+` +
+                        `Return the 18-hole scorecard for "${course.name}" at "${course.address}".
+
+` +
+                        `Required format (exactly 18 holes):
+` +
+                        `{"name":"${course.name}","city":"${course.city}","state":"${course.state}","holes":[{"hole":1,"par":4,"yardageBlue":380,"yardageWhite":360,"yardageRed":320,"handicap":5},{"hole":2,...},...{"hole":18,...}]}
+
+` +
+                        `Rules:
+` +
+                        `- par must be 3, 4, or 5
+` +
+                        `- yardageBlue = back tees, yardageWhite = middle tees, yardageRed = forward tees
+` +
+                        `- handicap = stroke index 1-18
+` +
+                        `- Use best known values for this course. If uncertain, use realistic estimates.
+` +
+                        `- Output ONLY the JSON object. Nothing else.`
                     );
 
+                    // Robust parsing — strip any accidental markdown/prose
+                    let parseTarget = raw.trim();
+                    // Strip markdown code fences
+                    parseTarget = parseTarget.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+                    // If there's prose before the JSON, find the first {
+                    const firstBrace = parseTarget.indexOf('{');
+                    const lastBrace = parseTarget.lastIndexOf('}');
+                    if (firstBrace > 0) parseTarget = parseTarget.slice(firstBrace, lastBrace + 1);
+
                     try {
-                        scorecard = JSON.parse(raw);
+                        scorecard = JSON.parse(parseTarget);
                     } catch(e) {
-                        const match = raw.match(/\{[\s\S]*\}/);
-                        if (match) scorecard = JSON.parse(match[0]);
-                        else throw new Error('Could not parse scorecard response');
+                        console.error('Raw AI response:', raw);
+                        throw new Error(`Could not parse scorecard JSON: ${e.message}. Raw response logged to console.`);
                     }
                 }
 
