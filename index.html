@@ -295,6 +295,17 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
+    <!-- Resync blocking overlay — prevents edits against stale data -->
+    <div id="resyncOverlay" style="display:none;position:fixed;inset:0;z-index:999999;
+         background:rgba(20,30,45,0.92);backdrop-filter:blur(3px);
+         align-items:center;justify-content:center;flex-direction:column;color:white;text-align:center;padding:20px;">
+        <div style="width:54px;height:54px;border:5px solid rgba(255,255,255,0.25);
+             border-top-color:#3498db;border-radius:50%;animation:resyncSpin 0.8s linear infinite;margin-bottom:18px;"></div>
+        <div style="font-size:1.15em;font-weight:700;margin-bottom:6px;">📡 Syncing latest scores…</div>
+        <div style="font-size:0.9em;opacity:0.8;">Just a moment — making sure you have the current data.</div>
+    </div>
+    <style>@keyframes resyncSpin { to { transform: rotate(360deg); } }</style>
+
     <div class="container">
         <div class="header">
             <h1>🏆 Ryder Cup Style Golf Event Tracker</h1>
@@ -4186,7 +4197,7 @@
         //
         //  Run this SQL in Supabase once:
         //    CREATE TABLE IF NOT EXISTS live_scores (
-        //      event_id   bigint NOT NULL,
+        //      event_id   uuid   NOT NULL,   -- matches events.id (uuid)
         //      round_idx  int    NOT NULL,
         //      match_idx  int    NOT NULL,
         //      cell_type  text   NOT NULL,   -- 'score' | 'kickout' | 'sombrero_take'
@@ -4199,7 +4210,26 @@
         //    ALTER PUBLICATION supabase_realtime ADD TABLE live_scores;
         // ════════════════════════════════════════════════════════════════════
 
+        let lastInteractionAt = Date.now();
+
         async function saveCell(cellType, cellKey, hole, value) {
+            // If it's been a while since the last interaction, the local view may be
+            // stale (mobile backgrounding killed realtime). Reconnect + resync first,
+            // but DON'T block this specific write — per-cell writes only touch their own
+            // row so they're safe. The resync refreshes everything else around it.
+            const idleGap = Date.now() - lastInteractionAt;
+            lastInteractionAt = Date.now();
+            if (idleGap > 15000) {
+                reconnectRealtime();
+                await resyncFromServer('save-after-idle', true); // block + await before saving
+            }
+            // If a blocking resync is in flight, wait for it to finish
+            let waited = 0;
+            while (resyncInFlight && waited < 5000) {
+                await new Promise(r => setTimeout(r, 100));
+                waited += 100;
+            }
+
             // Persist locally first for instant feel
             persistEventLocally();
 
@@ -4265,6 +4295,70 @@
             }
         }
 
+        // Migrate scores that exist only in the event blob into the live_scores table.
+        // Idempotent: uses upsert, so re-running won't duplicate. Only fills cells that
+        // have a real value; never overwrites a newer server cell with a blank.
+        async function backfillBlobScoresToCells(eventId) {
+            if (!supabaseClient || !isSupabaseEnabled) return;
+            if (!event.liveScores) return;
+            const rows = [];
+            const now = new Date().toISOString();
+
+            Object.keys(event.liveScores).forEach(rKey => {
+                const r = parseInt(rKey);
+                Object.keys(event.liveScores[rKey]).forEach(mKey => {
+                    const m = parseInt(mKey);
+                    const matchLS = event.liveScores[rKey][mKey];
+                    Object.keys(matchLS).forEach(key => {
+                        const val = matchLS[key];
+                        if (Array.isArray(val) && !key.startsWith('__')) {
+                            // player score array
+                            val.forEach((score, i) => {
+                                if (score !== null && score !== undefined) {
+                                    rows.push({ event_id: eventId, round_idx: r, match_idx: m, cell_type: 'score', cell_key: key, hole: i + 1, value: Number(score), updated_at: now });
+                                }
+                            });
+                        }
+                    });
+                    // kickouts
+                    if (matchLS.__kickouts__) {
+                        Object.keys(matchLS.__kickouts__).forEach(player => {
+                            matchLS.__kickouts__[player].forEach((cnt, i) => {
+                                if (cnt && cnt > 0) {
+                                    rows.push({ event_id: eventId, round_idx: r, match_idx: m, cell_type: 'kickout', cell_key: player, hole: i + 1, value: Number(cnt), updated_at: now });
+                                }
+                            });
+                        });
+                    }
+                    // sombrero takes
+                    if (matchLS.__goldenSombreros__ && matchLS.__goldenSombreros__.__teamSombreros__) {
+                        matchLS.__goldenSombreros__.__teamSombreros__.forEach((holes, teamIdx) => {
+                            holes.forEach(h => {
+                                rows.push({ event_id: eventId, round_idx: r, match_idx: m, cell_type: 'sombrero_take', cell_key: String(teamIdx), hole: h + 1, value: 1, updated_at: now });
+                            });
+                        });
+                    }
+                });
+            });
+
+            if (rows.length === 0) return;
+            try {
+                // Only insert rows that don't already exist (ignoreDuplicates so we never
+                // clobber a newer server value). Chunk to stay under payload limits.
+                for (let i = 0; i < rows.length; i += 200) {
+                    const chunk = rows.slice(i, i + 200);
+                    lastRealtimeUpdate = Date.now();
+                    const { error } = await supabaseClient
+                        .from('live_scores')
+                        .upsert(chunk, { onConflict: 'event_id,round_idx,match_idx,cell_type,cell_key,hole', ignoreDuplicates: true });
+                    if (error) { console.error('Backfill chunk failed:', error); break; }
+                }
+                console.log(`Backfilled ${rows.length} blob scores into live_scores`);
+            } catch(err) {
+                console.error('Backfill failed:', err);
+            }
+        }
+
         // Load all cells for an event and rebuild liveScores
         async function loadLiveScoreCells(eventId) {
             if (!supabaseClient || !isSupabaseEnabled) return;
@@ -4310,9 +4404,23 @@
         }
 
         // Subscribe to per-cell realtime updates for an event
+        let cellChannel = null;
+        let activeRealtimeEventId = null;
+        let resyncPollTimer = null;
+        let lastResyncAt = 0;
+
         function subscribeToCellUpdates(eventId) {
             if (!supabaseClient || !eventId) return;
-            const channel = supabaseClient
+
+            // Tear down any prior channel first
+            if (cellChannel) {
+                try { supabaseClient.removeChannel(cellChannel); } catch(e) {}
+                cellChannel = null;
+            }
+
+            activeRealtimeEventId = eventId;
+
+            cellChannel = supabaseClient
                 .channel(`cells-${eventId}`)
                 .on('postgres_changes', {
                     event: '*',
@@ -4323,11 +4431,9 @@
                     if (lastRealtimeUpdate && Date.now() - lastRealtimeUpdate < 1500) return; // ignore our echo
                     const row = payload.new && payload.new.event_id ? payload.new : payload.old;
                     if (!row) return;
-                    // For deletes, treat as null value
                     if (payload.eventType === 'DELETE') row.value = null;
                     applyCellToLiveScores(row);
                     if (row.cell_type === 'sombrero_take') rebuildAllSombreroPointsFromTakes();
-                    // Refresh views
                     calculatePoints();
                     renderLiveScoring();
                     renderLiveScoreboardTab();
@@ -4337,8 +4443,101 @@
                     showToast('📡 Updated', 'info', 1200);
                 })
                 .subscribe();
-            return channel;
+
+            // Start the safety-net poll (covers missed realtime events on mobile)
+            startResyncPoll();
+            return cellChannel;
         }
+
+        let resyncInFlight = false;
+
+        function showResyncOverlay() {
+            const el = document.getElementById('resyncOverlay');
+            if (el) el.style.display = 'flex';
+        }
+        function hideResyncOverlay() {
+            const el = document.getElementById('resyncOverlay');
+            if (el) el.style.display = 'none';
+        }
+
+        // Full re-fetch of all cells from the server, then re-render.
+        // Called when the page regains focus/visibility/network after being idle.
+        async function resyncFromServer(reason, blocking = false) {
+            if (!supabaseClient || !isSupabaseEnabled) return;
+            if (!activeRealtimeEventId) return;
+            // Throttle background polls, but ALWAYS run a blocking (wake-up) resync
+            if (!blocking && Date.now() - lastResyncAt < 2000) return;
+            lastResyncAt = Date.now();
+
+            // Block the UI for wake-up resyncs so nobody can tap against stale data
+            if (blocking) { resyncInFlight = true; showResyncOverlay(); }
+
+            try {
+                const { data, error } = await supabaseClient
+                    .from('live_scores')
+                    .select('*')
+                    .eq('event_id', activeRealtimeEventId);
+                if (error) throw error;
+                if (data) {
+                    // Overlay server cells on top of existing data.
+                    // We do NOT wipe liveScores — that would erase scores stored in the
+                    // event blob (or entered before the per-cell system) which aren't in
+                    // the live_scores table. Server cells win for any hole they cover.
+                    if (!event.liveScores) event.liveScores = {};
+                    data.forEach(row => applyCellToLiveScores(row));
+                    rebuildAllSombreroPointsFromTakes();
+
+                    calculatePoints();
+                    renderLiveScoring();
+                    renderLiveScoreboardTab();
+                    renderStandings();
+                    renderSombreros();
+                    renderKickouts();
+                }
+            } catch(err) {
+                console.error('Resync failed:', err);
+            } finally {
+                if (blocking) { resyncInFlight = false; hideResyncOverlay(); }
+            }
+        }
+
+        // Reconnect realtime channel (the old one is usually dead after backgrounding)
+        function reconnectRealtime() {
+            if (!supabaseClient || !activeRealtimeEventId) return;
+            subscribeToCellUpdates(activeRealtimeEventId);
+        }
+
+        function startResyncPoll() {
+            if (resyncPollTimer) clearInterval(resyncPollTimer);
+            // Poll every 20s, but only while the page is visible
+            resyncPollTimer = setInterval(() => {
+                if (document.visibilityState === 'visible') {
+                    resyncFromServer('poll');
+                }
+            }, 20000);
+        }
+
+        // ── Wake-up handlers: re-sync + reconnect when returning to the app ──
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                reconnectRealtime();              // socket is likely dead after backgrounding
+                resyncFromServer('visible', true); // BLOCKING — disable app until fresh
+            }
+        });
+        window.addEventListener('focus', () => {
+            resyncFromServer('focus', true); // BLOCKING
+        });
+        window.addEventListener('online', () => {
+            reconnectRealtime();
+            resyncFromServer('online', true); // BLOCKING
+        });
+        // pageshow fires when restored from bfcache (common on mobile back/forward)
+        window.addEventListener('pageshow', (e) => {
+            if (e.persisted) {
+                reconnectRealtime();
+                resyncFromServer('pageshow', true); // BLOCKING
+            }
+        });
 
         // Save just to localStorage (no network) for instant local persistence
         function persistEventLocally() {
@@ -4957,7 +5156,9 @@
             updateEventBanner();
             showToast(`Event "${event.name}" loaded ✓`, 'success')
             if (event.id && !String(event.id).startsWith('local_')) {
-                // Load all per-cell scores (authoritative source), then re-render
+                // Migrate any blob-only scores into the cell table (one-time, idempotent),
+                // then load all per-cell scores as the authoritative source.
+                await backfillBlobScoresToCells(event.id);
                 await loadLiveScoreCells(event.id);
                 calculatePoints();
                 renderLiveScoring();
