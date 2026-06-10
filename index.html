@@ -2327,7 +2327,8 @@
                 if (!ko[player]) ko[player] = Array(18).fill(0);
                 ko[player][holeNumber - 1] = Math.max(0, (ko[player][holeNumber - 1] || 0) + delta);
             });
-            saveCurrentEvent({ blobOnly: true });
+            // Save just the kickout cell(s) for this hole
+            players.forEach(player => saveCell('kickout', player, holeNumber, ko[player][holeNumber - 1]));
             renderLiveScoring();
         }
 
@@ -2376,7 +2377,15 @@
             renderLiveScoring();
             renderSombreros(); // Update sombrero count tab immediately
             
-            saveCurrentEvent({ blobOnly: true });
+            // Remove just this one take marker (value=null deletes it on merge/realtime)
+            saveCell('sombrero_take', lastTakeTeam, lastTakeHole + 1, null);
+            // Also physically delete the row so it doesn't linger
+            if (supabaseClient && isSupabaseEnabled && event.id && !String(event.id).startsWith('local_')) {
+                lastRealtimeUpdate = Date.now();
+                supabaseClient.from('live_scores').delete()
+                    .match({ event_id: event.id, round_idx: currentLiveRound, match_idx: currentLiveMatch, cell_type: 'sombrero_take', cell_key: String(lastTakeTeam), hole: lastTakeHole + 1 })
+                    .then(({ error }) => { if (error) console.error('Sombrero undo delete failed:', error); });
+            }
             const teamName = isTeam0 ? "Team 1" : "Team 2";
             showToast(`${teamName} undid sombrero take from hole ${lastTakeHole + 1}`, 'info', 3000);
         }
@@ -2405,7 +2414,8 @@
             renderLiveScoring();
             renderSombreros(); // Update sombrero count tab immediately
             
-            saveCurrentEvent({ blobOnly: true });
+            // Save just this one take marker (team index + hole). value=1 means "taken"
+            saveCell('sombrero_take', isTeam0 ? 0 : 1, holeNumber, 1);
             const teamName = isTeam0 ? "Team 1" : "Team 2";
             showToast(`${teamName} took the Golden Sombrero on hole ${holeNumber}`, 'info', 3000);
         }
@@ -2799,7 +2809,8 @@
             renderScoring();
             renderStandings();
             renderLiveScoreboardTab();
-            saveCurrentEvent({ blobOnly: true }); // scores live in blob — no need for full pipeline
+            // Save ONLY this one player's one hole — single tiny DB row
+            saveCell('score', playerName, holeNumber, score);
         }
 
         function recordTeamScore(teamIndex, holeNumber, score) {
@@ -2815,7 +2826,8 @@
             renderScoring();
             renderStandings();
             renderLiveScoreboardTab();
-            saveCurrentEvent({ blobOnly: true }); // scores live in blob — no need for full pipeline
+            // Save one tiny row per player for just this hole
+            teamPlayers.forEach(player => saveCell('score', player, holeNumber, score));
         }
 
         function getLiveMatchData(roundIndex, matchIndex) {
@@ -4010,6 +4022,347 @@
             }
         }
 
+        // Debounced, merge-aware save for live score changes.
+        // Re-fetches the latest blob from Supabase and merges ONLY liveScores
+        // (and sombrero/kickout data which live inside liveScores) so concurrent
+        // edits from multiple users don't clobber each other.
+        let _saveScoreTimer = null;
+        let _saveScoreInFlight = false;
+        let _saveScorePending = false;
+
+        function saveScoreChange() {
+            // Always persist locally right away
+            persistEventLocally();
+
+            // Debounce network saves (300ms) to batch rapid taps
+            if (_saveScoreTimer) clearTimeout(_saveScoreTimer);
+            _saveScoreTimer = setTimeout(() => {
+                doMergeSave();
+            }, 300);
+        }
+
+        async function doMergeSave() {
+            if (!supabaseClient || !isSupabaseEnabled) return;
+            if (!event.id || String(event.id).startsWith('local_')) {
+                // No real DB id yet — fall back to full save once to create the row
+                await saveCurrentEvent({ blobOnly: true });
+                return;
+            }
+
+            // If a save is already running, mark pending and bail — we'll re-run after
+            if (_saveScoreInFlight) { _saveScorePending = true; return; }
+            _saveScoreInFlight = true;
+
+            try {
+                showSyncStatus('Syncing…', 'blue');
+
+                // 1) Fetch the freshest blob from the server
+                const { data: fresh, error: fetchErr } = await supabaseClient
+                    .from('events')
+                    .select('event_data')
+                    .eq('id', event.id)
+                    .single();
+
+                if (fetchErr) throw fetchErr;
+
+                let serverBlob = {};
+                try {
+                    serverBlob = typeof fresh.event_data === 'string'
+                        ? JSON.parse(fresh.event_data)
+                        : (fresh.event_data || {});
+                } catch(e) { serverBlob = {}; }
+
+                // 2) Merge: start from server state, then overlay OUR liveScores
+                //    (liveScores holds scores + __kickouts__ + __goldenSombreros__)
+                const merged = {
+                    teams:        serverBlob.teams        || event.teams        || [],
+                    rounds:       serverBlob.rounds       || event.rounds       || [],
+                    teamRosters:  serverBlob.teamRosters  || event.teamRosters  || [],
+                    liveScores:   mergeLiveScores(serverBlob.liveScores || {}, event.liveScores || {})
+                };
+
+                // 3) Adopt the merged result locally so we stay in sync
+                event.liveScores = merged.liveScores;
+
+                // 4) Write back
+                lastRealtimeUpdate = Date.now(); // suppress our own realtime echo
+                const { error: writeErr } = await supabaseClient
+                    .from('events')
+                    .update({ event_data: JSON.stringify(merged) })
+                    .eq('id', event.id);
+
+                if (writeErr) throw writeErr;
+
+                showSyncStatus('Saved ✓', 'green');
+            } catch(err) {
+                console.error('Merge save failed:', err);
+                showSyncStatus('Save failed', 'red');
+            } finally {
+                _saveScoreInFlight = false;
+                // If another change came in while we were saving, save again
+                if (_saveScorePending) {
+                    _saveScorePending = false;
+                    doMergeSave();
+                }
+            }
+        }
+
+        // Merge two liveScores objects. Round/match/player arrays are merged
+        // hole-by-hole: a non-null value wins. This means two users editing
+        // DIFFERENT holes both keep their entries instead of overwriting.
+        function mergeLiveScores(serverLS, localLS) {
+            const result = JSON.parse(JSON.stringify(serverLS || {}));
+
+            for (const roundKey of Object.keys(localLS || {})) {
+                if (!result[roundKey]) result[roundKey] = {};
+                for (const matchKey of Object.keys(localLS[roundKey])) {
+                    const localMatch = localLS[roundKey][matchKey];
+                    if (!result[roundKey][matchKey]) result[roundKey][matchKey] = {};
+                    const outMatch = result[roundKey][matchKey];
+
+                    for (const key of Object.keys(localMatch)) {
+                        const localVal = localMatch[key];
+
+                        if (Array.isArray(localVal)) {
+                            // Player score array (or kickout/sombrero array) — merge per hole
+                            const serverArr = Array.isArray(outMatch[key]) ? outMatch[key] : [];
+                            const mergedArr = [];
+                            const len = Math.max(localVal.length, serverArr.length);
+                            for (let i = 0; i < len; i++) {
+                                const lv = localVal[i];
+                                const sv = serverArr[i];
+                                // Prefer a real (non-null/undefined) local value; else keep server
+                                if (lv !== null && lv !== undefined && lv !== 0) {
+                                    mergedArr[i] = lv;
+                                } else if (sv !== null && sv !== undefined && sv !== 0) {
+                                    mergedArr[i] = sv;
+                                } else {
+                                    mergedArr[i] = (lv !== null && lv !== undefined) ? lv : (sv !== undefined ? sv : null);
+                                }
+                            }
+                            outMatch[key] = mergedArr;
+                        } else if (localVal && typeof localVal === 'object') {
+                            // Nested object like __kickouts__ / __goldenSombreros__
+                            outMatch[key] = mergeNestedScoreObject(outMatch[key] || {}, localVal);
+                        } else {
+                            // Scalar — take local if present
+                            outMatch[key] = (localVal !== undefined) ? localVal : outMatch[key];
+                        }
+                    }
+                }
+            }
+            return result;
+        }
+
+        function mergeNestedScoreObject(serverObj, localObj) {
+            const out = JSON.parse(JSON.stringify(serverObj || {}));
+            for (const k of Object.keys(localObj || {})) {
+                const lv = localObj[k];
+                if (Array.isArray(lv)) {
+                    const sv = Array.isArray(out[k]) ? out[k] : [];
+                    const merged = [];
+                    const len = Math.max(lv.length, sv.length);
+                    for (let i = 0; i < len; i++) {
+                        const a = lv[i], b = sv[i];
+                        if (a !== null && a !== undefined && a !== 0) merged[i] = a;
+                        else if (b !== null && b !== undefined && b !== 0) merged[i] = b;
+                        else merged[i] = (a !== undefined ? a : (b !== undefined ? b : 0));
+                    }
+                    out[k] = merged;
+                } else if (lv && typeof lv === 'object') {
+                    out[k] = mergeNestedScoreObject(out[k] || {}, lv);
+                } else {
+                    out[k] = (lv !== undefined) ? lv : out[k];
+                }
+            }
+            return out;
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        //  PER-CELL SAVES — each score/kickout/sombrero is ONE tiny DB row.
+        //  Table: live_scores (see SQL setup). Because each cell is its own row,
+        //  two users editing different holes/players can NEVER overwrite each
+        //  other — they touch different rows.
+        //
+        //  Run this SQL in Supabase once:
+        //    CREATE TABLE IF NOT EXISTS live_scores (
+        //      event_id   bigint NOT NULL,
+        //      round_idx  int    NOT NULL,
+        //      match_idx  int    NOT NULL,
+        //      cell_type  text   NOT NULL,   -- 'score' | 'kickout' | 'sombrero_take'
+        //      cell_key   text   NOT NULL,   -- player name, or team index for sombrero
+        //      hole       int    NOT NULL,   -- 1-18 (0 for take-list markers)
+        //      value      numeric,           -- the score / count / 1
+        //      updated_at timestamptz DEFAULT now(),
+        //      PRIMARY KEY (event_id, round_idx, match_idx, cell_type, cell_key, hole)
+        //    );
+        //    ALTER PUBLICATION supabase_realtime ADD TABLE live_scores;
+        // ════════════════════════════════════════════════════════════════════
+
+        async function saveCell(cellType, cellKey, hole, value) {
+            // Persist locally first for instant feel
+            persistEventLocally();
+
+            if (!supabaseClient || !isSupabaseEnabled) return;
+            if (!event.id || String(event.id).startsWith('local_')) {
+                // No DB id yet — create the event row once, then cells can save
+                await saveCurrentEvent({ blobOnly: true });
+                if (!event.id || String(event.id).startsWith('local_')) return;
+            }
+
+            const row = {
+                event_id: event.id,
+                round_idx: currentLiveRound,
+                match_idx: currentLiveMatch,
+                cell_type: cellType,
+                cell_key: String(cellKey),
+                hole: hole,
+                value: (value === null || value === undefined) ? null : Number(value),
+                updated_at: new Date().toISOString()
+            };
+
+            try {
+                lastRealtimeUpdate = Date.now(); // suppress our own realtime echo
+                const { error } = await supabaseClient
+                    .from('live_scores')
+                    .upsert(row, { onConflict: 'event_id,round_idx,match_idx,cell_type,cell_key,hole' });
+                if (error) throw error;
+                showSyncStatus('Saved ✓', 'green');
+            } catch(err) {
+                console.error('Cell save failed:', err);
+                showSyncStatus('Save failed', 'red');
+            }
+        }
+
+        // Apply a single incoming cell (from realtime or initial load) into event.liveScores
+        function applyCellToLiveScores(row) {
+            const r = row.round_idx, m = row.match_idx;
+            if (!event.liveScores[r]) event.liveScores[r] = {};
+            if (!event.liveScores[r][m]) event.liveScores[r][m] = {};
+            const matchLS = event.liveScores[r][m];
+
+            if (row.cell_type === 'score') {
+                if (!Array.isArray(matchLS[row.cell_key])) matchLS[row.cell_key] = Array(18).fill(null);
+                matchLS[row.cell_key][row.hole - 1] = (row.value === null ? null : row.value);
+            } else if (row.cell_type === 'kickout') {
+                if (!matchLS.__kickouts__) matchLS.__kickouts__ = {};
+                if (!Array.isArray(matchLS.__kickouts__[row.cell_key])) matchLS.__kickouts__[row.cell_key] = Array(18).fill(0);
+                matchLS.__kickouts__[row.cell_key][row.hole - 1] = row.value || 0;
+            } else if (row.cell_type === 'sombrero_take') {
+                // cell_key = team index ('0'/'1'), hole = hole taken, value = 1 (present) or null (removed)
+                if (!matchLS.__goldenSombreros__) matchLS.__goldenSombreros__ = {};
+                const gs = matchLS.__goldenSombreros__;
+                if (!gs.__teamSombreros__) gs.__teamSombreros__ = [[], []];
+                const teamIdx = parseInt(row.cell_key);
+                const arr = gs.__teamSombreros__[teamIdx];
+                const holeZeroIdx = row.hole - 1;
+                const pos = arr.indexOf(holeZeroIdx);
+                if (row.value === null) {
+                    if (pos >= 0) arr.splice(pos, 1); // removed (undo)
+                } else {
+                    if (pos < 0) arr.push(holeZeroIdx); // added (take)
+                }
+            }
+        }
+
+        // Load all cells for an event and rebuild liveScores
+        async function loadLiveScoreCells(eventId) {
+            if (!supabaseClient || !isSupabaseEnabled) return;
+            try {
+                const { data, error } = await supabaseClient
+                    .from('live_scores')
+                    .select('*')
+                    .eq('event_id', eventId);
+                if (error) throw error;
+                if (!data) return;
+                data.forEach(row => applyCellToLiveScores(row));
+                // After loading sombrero takes, recalc the point arrays for each match
+                rebuildAllSombreroPointsFromTakes();
+            } catch(err) {
+                console.error('Failed to load live score cells:', err);
+            }
+        }
+
+        // Rebuild golden sombrero point arrays from the take-lists across all matches
+        function rebuildAllSombreroPointsFromTakes() {
+            if (!event.liveScores) return;
+            Object.keys(event.liveScores).forEach(r => {
+                Object.keys(event.liveScores[r]).forEach(m => {
+                    const matchLS = event.liveScores[r][m];
+                    const gs = matchLS.__goldenSombreros__;
+                    if (!gs || !gs.__teamSombreros__) return;
+                    const round = event.rounds[r];
+                    const match = round && round.matches[m];
+                    if (!match) return;
+                    const allPlayers = [...match.team0Players, ...match.team1Players];
+                    allPlayers.forEach(p => { gs[p] = Array(18).fill(0); });
+                    let activeTeam = -1;
+                    for (let hole = 0; hole < 18; hole++) {
+                        if (gs.__teamSombreros__[0].includes(hole)) activeTeam = 0;
+                        if (gs.__teamSombreros__[1].includes(hole)) activeTeam = 1;
+                        if (activeTeam >= 0) {
+                            const tp = activeTeam === 0 ? match.team0Players : match.team1Players;
+                            tp.forEach(p => { if (gs[p]) gs[p][hole] = 1; });
+                        }
+                    }
+                });
+            });
+        }
+
+        // Subscribe to per-cell realtime updates for an event
+        function subscribeToCellUpdates(eventId) {
+            if (!supabaseClient || !eventId) return;
+            const channel = supabaseClient
+                .channel(`cells-${eventId}`)
+                .on('postgres_changes', {
+                    event: '*',
+                    schema: 'public',
+                    table: 'live_scores',
+                    filter: `event_id=eq.${eventId}`
+                }, (payload) => {
+                    if (lastRealtimeUpdate && Date.now() - lastRealtimeUpdate < 1500) return; // ignore our echo
+                    const row = payload.new && payload.new.event_id ? payload.new : payload.old;
+                    if (!row) return;
+                    // For deletes, treat as null value
+                    if (payload.eventType === 'DELETE') row.value = null;
+                    applyCellToLiveScores(row);
+                    if (row.cell_type === 'sombrero_take') rebuildAllSombreroPointsFromTakes();
+                    // Refresh views
+                    calculatePoints();
+                    renderLiveScoring();
+                    renderLiveScoreboardTab();
+                    renderStandings();
+                    renderSombreros();
+                    renderKickouts();
+                    showToast('📡 Updated', 'info', 1200);
+                })
+                .subscribe();
+            return channel;
+        }
+
+        // Save just to localStorage (no network) for instant local persistence
+        function persistEventLocally() {
+            try {
+                if (!event || !event.name) return;
+                const saved = getSavedEvents();
+                const idx = saved.findIndex(e => e.name === event.name);
+                const localCopy = {
+                    id: event.id,
+                    name: event.name,
+                    scoringType: event.scoringType,
+                    blowoutBonus: event.blowoutBonus,
+                    teams: event.teams,
+                    rounds: event.rounds,
+                    liveScores: event.liveScores,
+                    teamRosters: event.teamRosters
+                };
+                if (idx >= 0) saved[idx] = localCopy; else saved.push(localCopy);
+                localStorage.setItem('golfEvents', JSON.stringify(saved));
+            } catch(e) {
+                console.error('Local persist failed:', e);
+            }
+        }
+
         async function saveCurrentEvent(opts = {}) {
             if (!event.name) return;
             
@@ -4604,7 +4957,16 @@
             updateEventBanner();
             showToast(`Event "${event.name}" loaded ✓`, 'success')
             if (event.id && !String(event.id).startsWith('local_')) {
-                subscribeToRealtimeUpdates(event.id);
+                // Load all per-cell scores (authoritative source), then re-render
+                await loadLiveScoreCells(event.id);
+                calculatePoints();
+                renderLiveScoring();
+                renderLiveScoreboardTab();
+                renderStandings();
+                renderSombreros();
+                renderKickouts();
+                // Subscribe to per-cell realtime updates
+                subscribeToCellUpdates(event.id);
             }
             switchTab('livescoreboard');
         }
