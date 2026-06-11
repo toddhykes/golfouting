@@ -3010,6 +3010,18 @@
             currentLiveRound = null;
             currentLiveMatch = null;
             currentLiveHole = 1;
+
+            // Tear down realtime subscription from any previous event so its
+            // cell updates don't bleed into the newly loaded event
+            if (typeof cellChannel !== 'undefined' && cellChannel && supabaseClient) {
+                try { supabaseClient.removeChannel(cellChannel); } catch(e) {}
+                cellChannel = null;
+            }
+            if (typeof activeRealtimeEventId !== 'undefined') activeRealtimeEventId = null;
+            if (typeof resyncPollTimer !== 'undefined' && resyncPollTimer) {
+                clearInterval(resyncPollTimer);
+                resyncPollTimer = null;
+            }
             
             // Clear all rendered content (unless we're about to re-render immediately)
             if (!skipHTMLClear) {
@@ -3018,6 +3030,10 @@
                 document.getElementById('liveContent').innerHTML = '';
                 document.getElementById('standingsContent').innerHTML = '';
                 document.getElementById('liveScoreboardContent').innerHTML = '';
+                const koEl = document.getElementById('kickoutsContent');
+                if (koEl) koEl.innerHTML = '';
+                const sombEl = document.getElementById('sombrerosContent');
+                if (sombEl) sombEl.innerHTML = '';
             }
             
             console.log('All data cleared', skipHTMLClear ? '(HTML preserved)' : '');
