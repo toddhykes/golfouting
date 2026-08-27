@@ -1127,6 +1127,91 @@
             });
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        //  COURSE LIBRARY — verified (manually locked) scorecards are saved
+        //  per-course (keyed by normalized name), NOT per-event. Any event that
+        //  uses that course pulls the verified card automatically.
+        //
+        //  Optional Supabase table for cross-device sync:
+        //    CREATE TABLE IF NOT EXISTS course_library (
+        //      course_key text PRIMARY KEY,   -- normalized name
+        //      course_data jsonb NOT NULL,
+        //      updated_at  timestamptz DEFAULT now()
+        //    );
+        // ════════════════════════════════════════════════════════════════════
+
+        function normalizeCourseKey(name, city) {
+            return (name + (city ? '|' + city : ''))
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '');
+        }
+
+        function getCourseLibrary() {
+            try { return JSON.parse(localStorage.getItem('courseLibrary') || '{}'); }
+            catch(e) { return {}; }
+        }
+
+        function getVerifiedCourse(name, city) {
+            const lib = getCourseLibrary();
+            const key = normalizeCourseKey(name, city);
+            return lib[key] || null;
+        }
+
+        async function saveVerifiedCourse(course) {
+            const key = normalizeCourseKey(course.name, course.city);
+            // Mark it as a verified/manual card
+            const toSave = JSON.parse(JSON.stringify(course));
+            toSave.locked = true;
+            toSave.verified = true;
+            toSave.source = 'manual';
+            toSave.verifiedAt = new Date().toISOString();
+
+            // 1) localStorage
+            const lib = getCourseLibrary();
+            lib[key] = toSave;
+            localStorage.setItem('courseLibrary', JSON.stringify(lib));
+
+            // 2) Supabase (best-effort, cross-device)
+            if (supabaseClient && isSupabaseEnabled) {
+                try {
+                    await supabaseClient.from('course_library').upsert({
+                        course_key: key,
+                        course_data: toSave,
+                        updated_at: new Date().toISOString()
+                    }, { onConflict: 'course_key' });
+                } catch(err) {
+                    console.log('Course library cloud save skipped:', err.message);
+                }
+            }
+            return toSave;
+        }
+
+        // Look up a verified course in Supabase (falls back to localStorage copy)
+        async function fetchVerifiedCourse(name, city) {
+            const key = normalizeCourseKey(name, city);
+            // Try cloud first for freshest cross-device data
+            if (supabaseClient && isSupabaseEnabled) {
+                try {
+                    const { data, error } = await supabaseClient
+                        .from('course_library')
+                        .select('course_data')
+                        .eq('course_key', key)
+                        .maybeSingle();
+                    if (!error && data && data.course_data) {
+                        // Cache locally too
+                        const lib = getCourseLibrary();
+                        lib[key] = data.course_data;
+                        localStorage.setItem('courseLibrary', JSON.stringify(lib));
+                        return data.course_data;
+                    }
+                } catch(err) {
+                    console.log('Course library cloud fetch skipped:', err.message);
+                }
+            }
+            return getVerifiedCourse(name, city);
+        }
+
         async function selectCourse(roundNum, idx) {
             const resultsEl = document.getElementById(`courseResults${roundNum}`);
             const courses = resultsEl._courses;
@@ -1136,7 +1221,23 @@
             resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">⛳ Loading scorecard for ${course.name}...</div>`;
 
             try {
-                // Don't regenerate if already locked
+                // ── Step 0: VERIFIED LIBRARY — a manually-locked card for this
+                //    course always wins, regardless of which event we're in ──
+                resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">🔎 Checking your saved courses…</div>`;
+                const verified = await fetchVerifiedCourse(course.name, course.city);
+                if (verified) {
+                    // Store into this round and render
+                    const roundIndex = roundNum - 1;
+                    if (event.rounds && event.rounds[roundIndex]) event.rounds[roundIndex].course = verified;
+                    else { if (!window._pendingCourses) window._pendingCourses = {}; window._pendingCourses[roundIndex] = verified; }
+                    resultsEl.innerHTML = '';
+                    renderSelectedCourse(roundNum, verified);
+                    saveCurrentEvent();
+                    showToast('✅ Loaded your verified scorecard for this course', 'success', 3000);
+                    return;
+                }
+
+                // Don't regenerate if already locked within this event
                 const existingCourse = getStoredCourse(roundNum);
                 if (existingCourse && existingCourse.locked && existingCourse.name === course.name) {
                     resultsEl.innerHTML = '';
@@ -1289,25 +1390,42 @@
                        ✕ Change
                    </button>`;
 
-            const headerNote = !isLocked && !editMode
-                ? course.source === 'golfify'
-                    ? `<div style="background:#e8f5e8;border:1px solid #27ae60;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.85em;">
-                           📡 <strong>Scorecard loaded from Golfify.</strong> Looks good? Click <strong>Save & Lock</strong> to save permanently — it won't be fetched again.
-                           Or click <strong>Edit Scorecard</strong> to make corrections first.
-                       </div>`
-                    : `<div style="background:#fff3cd;border:1px solid #f39c12;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.85em;">
-                           ⚠️ <strong>AI-generated scorecard — please verify.</strong> 
-                           Click <strong>Edit Scorecard</strong> to correct any errors, then <strong>Save & Lock</strong> to save permanently.
-                       </div>`
-                : '';
+            let headerNote = '';
+            if (editMode) {
+                headerNote = '';
+            } else if (course.verified || course.source === 'manual') {
+                // Verified card — used across all events
+                headerNote = `<div style="background:#e8f5e8;border:1px solid #27ae60;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.85em;">
+                        ✓ <strong>This is your verified scorecard for ${course.name}.</strong>
+                        It's saved to your course library and will be used automatically for this course in <em>any</em> event.
+                        ${isLocked ? 'Use <strong>🔓 Unlock</strong> then <strong>Edit</strong> to change it.' : ''}
+                    </div>`;
+            } else if (!isLocked && course.source === 'golfify') {
+                headerNote = `<div style="background:#eaf4fb;border:1px solid #3498db;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.85em;">
+                        📡 <strong>Scorecard loaded from Golfify (not yet verified).</strong> Review it, then click
+                        <strong>Save & Lock</strong> to make it your verified card for this course everywhere.
+                    </div>`;
+            } else if (!isLocked) {
+                headerNote = `<div style="background:#fff3cd;border:1px solid #f39c12;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.85em;">
+                        ⚠️ <strong>AI-generated scorecard — NOT verified.</strong> These numbers may be wrong.
+                        Click <strong>Edit Scorecard</strong> to correct them, then <strong>Save & Lock</strong> to make it your
+                        verified card for this course (used in all future events).
+                    </div>`;
+            }
 
+            const isVerified = course.verified || course.source === 'manual';
+            const borderColor = isVerified ? '#27ae60' : (isLocked ? '#27ae60' : (course.source === 'golfify' ? '#3498db' : '#f39c12'));
             el.innerHTML = `
-                <div style="background:white;border:2px solid ${isLocked?'#27ae60':'#f39c12'};border-radius:8px;padding:12px;margin-top:8px;">
+                <div style="background:white;border:3px solid ${borderColor};border-radius:8px;padding:12px;margin-top:8px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
                         <div>
                             <div style="font-weight:700;color:#2c3e50;font-size:1.05em;">
                                 ${isLocked?'✅':'⛳'} ${course.name} ${lockedBadge}
-                                ${course.source==='golfify' ? '<span style="background:#3498db;color:white;padding:2px 6px;border-radius:8px;font-size:0.7em;margin-left:6px;">📡 Golfify</span>' : '<span style="background:#9b59b6;color:white;padding:2px 6px;border-radius:8px;font-size:0.7em;margin-left:6px;">🤖 AI</span>'}
+                                ${(() => {
+                                    if (course.verified || course.source === 'manual') return '<span style="background:#27ae60;color:white;padding:2px 8px;border-radius:8px;font-size:0.7em;margin-left:6px;font-weight:700;">✓ VERIFIED (manual)</span>';
+                                    if (course.source === 'golfify') return '<span style="background:#3498db;color:white;padding:2px 6px;border-radius:8px;font-size:0.7em;margin-left:6px;">📡 Golfify</span>';
+                                    return '<span style="background:#9b59b6;color:white;padding:2px 6px;border-radius:8px;font-size:0.7em;margin-left:6px;">🤖 AI-generated</span>';
+                                })()}
                             </div>
                             <div style="color:#7f8c8d;font-size:0.85em;">${course.city||''} ${course.state?', '+course.state:''} &bull; Par ${totalPar} &bull; ${totalBlue} yds (Blue)</div>
                         </div>
@@ -1372,10 +1490,12 @@
             showToast('Scorecard unlocked — remember to re-lock after editing', 'info', 3000);
         }
 
-        function saveScorecardEdits(roundNum) {
+        async function saveScorecardEdits(roundNum) {
             const course = getStoredCourse(roundNum);
             if (!course) return;
             course.locked = true;
+            course.verified = true;       // manual save = verified real data
+            course.source = 'manual';
             const roundIndex = roundNum - 1;
             if (event.rounds && event.rounds[roundIndex]) {
                 event.rounds[roundIndex].course = course;
@@ -1384,8 +1504,10 @@
                 window._pendingCourses[roundIndex] = course;
             }
             saveCurrentEvent();
+            // Save to the global course library so ALL future events use this card
+            await saveVerifiedCourse(course);
             renderSelectedCourse(roundNum, course);
-            showToast('Scorecard saved and locked ✓', 'success', 3000);
+            showToast('✅ Saved as your verified scorecard for this course', 'success', 3500);
         }
 
         function clearCourse(roundNum) {
@@ -2406,12 +2528,15 @@
             const players = JSON.parse(playersJson);
             const gs = event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__;
             
-            // Initialize if needed
-            if (!gs) {
+            // Initialize the structure and any missing player arrays
+            if (!event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__) {
                 event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__ = {};
+            }
+            {
+                const gsInit = event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__;
                 const allPlayers = [...match.team0Players, ...match.team1Players];
                 allPlayers.forEach(p => {
-                    event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__[p] = Array(18).fill(0);
+                    if (!Array.isArray(gsInit[p])) gsInit[p] = Array(18).fill(0);
                 });
             }
             
@@ -2439,8 +2564,9 @@
             
             const allPlayers = [...match.team0Players, ...match.team1Players];
             
-            // Reset all points
+            // Reset all points — ensure each player's array exists first
             allPlayers.forEach(p => {
+                if (!Array.isArray(gs[p])) gs[p] = Array(18).fill(0);
                 for (let h = 0; h < 18; h++) gs[p][h] = 0;
             });
             
@@ -2466,7 +2592,15 @@
 
         function calculateGoldenSombreroPoints(newSombreroHole, newSombreroTeam) {
             const match = event.rounds[currentLiveRound].matches[currentLiveMatch];
+            // Ensure the sombrero structure and per-player arrays exist
+            if (!event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__) {
+                event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__ = {};
+            }
             const gs = event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__;
+            const allPlayers = [...match.team0Players, ...match.team1Players];
+            allPlayers.forEach(p => {
+                if (!Array.isArray(gs[p])) gs[p] = Array(18).fill(0);
+            });
             
             // Track which holes each team took the sombrero
             if (!gs.__teamSombreros__) gs.__teamSombreros__ = [[], []]; // [team0holes, team1holes]
@@ -4405,7 +4539,7 @@
                     const match = round && round.matches[m];
                     if (!match) return;
                     const allPlayers = [...match.team0Players, ...match.team1Players];
-                    allPlayers.forEach(p => { gs[p] = Array(18).fill(0); });
+                    allPlayers.forEach(p => { if (!Array.isArray(gs[p])) gs[p] = Array(18).fill(0); else gs[p].fill(0); });
                     let activeTeam = -1;
                     for (let hole = 0; hole < 18; hole++) {
                         if (gs.__teamSombreros__[0].includes(hole)) activeTeam = 0;
@@ -5148,14 +5282,22 @@
             updateRoundFormats();
             
             // Set day formats, dates, and course selections
-            setTimeout(() => {
-                event.rounds.forEach((round, i) => {
+            setTimeout(async () => {
+                for (let i = 0; i < event.rounds.length; i++) {
+                    const round = event.rounds[i];
                     const formatEl = document.getElementById(`format${i + 1}`);
                     const dateEl = document.getElementById(`date${i + 1}`);
                     if (formatEl) formatEl.value = round.format;
                     if (dateEl && round.date) dateEl.value = round.date;
-                    if (round.course) renderSelectedCourse(i + 1, round.course);
-                });
+                    if (round.course) {
+                        // If a verified card exists for this course, always prefer it
+                        const verified = await fetchVerifiedCourse(round.course.name, round.course.city);
+                        if (verified) {
+                            round.course = verified;
+                        }
+                        renderSelectedCourse(i + 1, round.course);
+                    }
+                }
             }, 100);
             
             // Render everything

@@ -33,7 +33,7 @@ exports.handler = async function(event) {
                 'anthropic-version': '2023-06-01'
             },
             body: JSON.stringify({
-                model: 'claude-sonnet-4-20250514',
+                model: 'claude-sonnet-5',
                 max_tokens: 2000,
                 system: 'You are a JSON API. You output ONLY valid JSON with no explanation, no markdown, no backticks, no prose. Your entire response must be parseable by JSON.parse().',
                 messages: [{ role: 'user', content: prompt }]
