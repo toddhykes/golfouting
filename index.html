@@ -311,7 +311,7 @@
             <h1>🏆 Ryder Cup Style Golf Event Tracker</h1>
             <p>Multi-round match play score tracker</p>
             <p>Option for 'blowout bonus' if you want to punish unfair matchups</p>
-            <div id="supabaseStatus" style="margin-top: 10px; font-size: 0.9em; opacity: 0.9;"></div>
+            <div id="supabaseStatus" style="display:none;"></div>
         </div>
 
         <!-- Bottom Navigation (mobile) -->
@@ -671,7 +671,7 @@
             try {
                 supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
                 isSupabaseEnabled = true;
-                console.log('✅ Supabase connected - multi-device sync enabled');
+                console.log('Sync ready');
             } catch (error) {
                 console.error('❌ Supabase initialization failed:', error);
             }
@@ -748,7 +748,7 @@
                         renderSombreros();
                         renderKickouts();
 
-                        showToast('📡 Scores updated', 'info', 2000);
+                        showToast('Scores updated', 'info', 2000);
                     } catch (err) {
                         console.error('Realtime parse error:', err);
                     }
@@ -1033,8 +1033,7 @@
                 const url = `https://www.golfify.io/courses/${slug}`;
 
                 resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">
-                    🌐 Trying to load scorecard from Golfify...<br>
-                    <small style="opacity:0.7;">${url}</small>
+                    ⛳ Loading scorecard…
                 </div>`;
 
                 // Create hidden iframe
@@ -1223,7 +1222,7 @@
             try {
                 // ── Step 0: VERIFIED LIBRARY — a manually-locked card for this
                 //    course always wins, regardless of which event we're in ──
-                resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">🔎 Checking your saved courses…</div>`;
+                resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">⛳ Loading scorecard…</div>`;
                 const verified = await fetchVerifiedCourse(course.name, course.city);
                 if (verified) {
                     // Store into this round and render
@@ -1250,11 +1249,11 @@
                 let scorecard = await scrapeGolfifyScorecard(roundNum, course.name, course.city, course.state, resultsEl);
 
                 if (scorecard) {
-                    showToast(`✅ Scorecard loaded from Golfify (${scorecard.holes.length} holes)`, 'success', 3000);
+                    showToast(`Scorecard loaded (${scorecard.holes.length} holes)`, 'success', 3000);
                 } else {
                     // ── Step 2: Fall back to AI if Golfify scrape failed ─────
                     resultsEl.innerHTML = `<div style="color:#7f8c8d;padding:10px;text-align:center;">
-                        🤖 Generating scorecard with AI (please verify)...
+                        ⛳ Loading scorecard…
                     </div>`;
 
                     const raw = await callClaude(
@@ -1402,7 +1401,7 @@
                     </div>`;
             } else if (!isLocked && course.source === 'golfify') {
                 headerNote = `<div style="background:#eaf4fb;border:1px solid #3498db;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.85em;">
-                        📡 <strong>Scorecard loaded from Golfify (not yet verified).</strong> Review it, then click
+                        📡 <strong>Scorecard loaded (not yet verified).</strong> Review it, then click
                         <strong>Save & Lock</strong> to make it your verified card for this course everywhere.
                     </div>`;
             } else if (!isLocked) {
@@ -1423,7 +1422,7 @@
                                 ${isLocked?'✅':'⛳'} ${course.name} ${lockedBadge}
                                 ${(() => {
                                     if (course.verified || course.source === 'manual') return '<span style="background:#27ae60;color:white;padding:2px 8px;border-radius:8px;font-size:0.7em;margin-left:6px;font-weight:700;">✓ VERIFIED (manual)</span>';
-                                    if (course.source === 'golfify') return '<span style="background:#3498db;color:white;padding:2px 6px;border-radius:8px;font-size:0.7em;margin-left:6px;">📡 Golfify</span>';
+                                    if (course.source === 'golfify') return '<span style="background:#3498db;color:white;padding:2px 6px;border-radius:8px;font-size:0.7em;margin-left:6px;">📡 Auto-loaded</span>';
                                     return '<span style="background:#9b59b6;color:white;padding:2px 6px;border-radius:8px;font-size:0.7em;margin-left:6px;">🤖 AI-generated</span>';
                                 })()}
                             </div>
@@ -4215,7 +4214,7 @@
             _saveScoreInFlight = true;
 
             try {
-                showSyncStatus('Syncing…', 'blue');
+                showSyncStatus('Saving…', 'blue');
 
                 // 1) Fetch the freshest blob from the server
                 const { data: fresh, error: fetchErr } = await supabaseClient
@@ -4590,7 +4589,7 @@
                     renderStandings();
                     renderSombreros();
                     renderKickouts();
-                    showToast('📡 Updated', 'info', 1200);
+                    // silent update
                 })
                 .subscribe();
 
@@ -4751,7 +4750,7 @@
             }
             
             try {
-                showSyncStatus('Syncing...', 'blue');
+                showSyncStatus('Saving…', 'blue');
                 
                 // Step 1: Save or update event
                 const eventId = typeof eventData.id === 'string' && eventData.id.startsWith('local_') ? null : eventData.id;
@@ -5197,7 +5196,7 @@
             // localStorage only has stubs (no teamRosters) so don't trust it.
             if (supabaseClient && isSupabaseEnabled) {
                 try {
-                    showSyncStatus('Loading from cloud...', 'blue');
+                    showSyncStatus('Loading…', 'blue');
 
                     const result = await supabaseClient
                         .from('events')
@@ -5453,16 +5452,8 @@
             const statusEl = document.getElementById('supabaseStatus');
             if (!statusEl) return;
             
-            if (isSupabaseEnabled && realtimeChannel) {
-                statusEl.innerHTML = '☁️ Cloud Sync · 📡 Live updates on';
-                statusEl.style.color = '#2ecc71';
-            } else if (isSupabaseEnabled) {
-                statusEl.innerHTML = '☁️ Cloud Sync Enabled - Multi-device sync active';
-                statusEl.style.color = '#2ecc71';
-            } else {
-                statusEl.innerHTML = '💾 Local Storage Only - Using browser storage';
-                statusEl.style.color = '#95a5a6';
-            }
+            // Status indicator hidden in production — no-op
+            statusEl.innerHTML = '';
         }
         
         // Initialize
