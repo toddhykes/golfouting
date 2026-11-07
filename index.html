@@ -660,6 +660,11 @@
         // Get them from: Supabase Dashboard → Settings → API
         
          
+        // Production is the default. Dev-only helper text is gated behind this flag.
+        const IS_LOCAL_DEV = window.location.protocol === 'file:'
+            || window.location.hostname === 'localhost'
+            || window.location.hostname === '127.0.0.1';
+
         const SUPABASE_URL = 'https://jctsungrazwlhlxxpgpx.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpjdHN1bmdyYXp3bGhseHhwZ3B4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA0NjY5MzMsImV4cCI6MjA4NjA0MjkzM30.u-BftEG7ykPXIJjTXR0_edvswq4I7CccMwFCrq3BRq4'; // Long string starting with 'eyJ...'
         
@@ -708,6 +713,11 @@
         // ── Realtime state ───────────────────────────────────────────────────────
         let realtimeChannel = null;
         let lastRealtimeUpdate = null; // suppress echo of our own saves
+        let cellChannel = null;
+        let activeRealtimeEventId = null;
+        let resyncPollTimer = null;
+        let lastResyncAt = 0;
+        let resyncInFlight = false;
 
         function subscribeToRealtimeUpdates(eventId) {
             if (!supabaseClient || !eventId || String(eventId).startsWith('local_')) return;
@@ -737,18 +747,20 @@
                         const incoming = typeof updatedBlob === 'string' ? JSON.parse(updatedBlob) : updatedBlob;
                         if (!incoming) return;
 
-                        // Merge scores and rounds from the incoming update
-                        if (incoming.liveScores) event.liveScores = incoming.liveScores;
+                        // Only take setup data (matches, teams). Scores live in the
+                        // live_scores table and must never be replaced by the event copy,
+                        // which can be stale.
                         if (incoming.rounds) event.rounds = incoming.rounds;
+                        if (incoming.teams) event.teams = incoming.teams;
 
-                        // Refresh all live views
+                        rebuildAllSombreroPointsFromTakes();
+                        calculatePoints();
+                        renderMatchups();
                         renderLiveScoring();
                         renderLiveScoreboardTab();
                         renderStandings();
                         renderSombreros();
                         renderKickouts();
-
-                        showToast('Scores updated', 'info', 2000);
                     } catch (err) {
                         console.error('Realtime parse error:', err);
                     }
@@ -759,13 +771,6 @@
                         updateSupabaseStatusIndicator();
                     }
                 });
-        }
-
-        function unsubscribeRealtime() {
-            if (realtimeChannel && supabaseClient) {
-                supabaseClient.removeChannel(realtimeChannel);
-                realtimeChannel = null;
-            }
         }
 
         function updateEventBanner() {
@@ -835,7 +840,6 @@
             document.getElementById(tabName).classList.add('active');
 
             // Update bottom nav active state
-            const primaryTabs = ['setup','live','livescoreboard','standings'];
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             const navBtn = document.getElementById(`nav-${tabName}`);
             if (navBtn) {
@@ -2464,95 +2468,86 @@
             renderLiveScoring();
         }
 
-        function undoSombrero(playersJson) {
-            const match = event.rounds[currentLiveRound].matches[currentLiveMatch];
-            const players = JSON.parse(playersJson);
-            const gs = event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__;
-            
-            if (!gs || !gs.__teamSombreros__) {
-                showToast('Nothing to undo', 'warning');
-                return;
+        // Single source of truth: who owns the sombrero on each hole (0-based index).
+        // Used by points, the "wearing" badge, and buttons so they can never disagree.
+        function sombreroOwnerByHole(teamSombreros) {
+            const ts = teamSombreros || [[], []];
+            const owners = [];
+            let active = -1;
+            for (let h = 0; h < 18; h++) {
+                const t0 = (ts[0] || []).includes(h);
+                const t1 = (ts[1] || []).includes(h);
+                if (t0 && !t1) active = 0;
+                else if (t1 && !t0) active = 1;
+                else if (t0 && t1) active = 1; // legacy conflict; new takes prevent this
+                owners.push(active);
             }
-            
-            // Determine which team is trying to undo
-            const isTeam0 = players.some(p => match.team0Players.includes(p));
-            const teamIndex = isTeam0 ? 0 : 1;
-            
-            // Find the most recent sombrero take
-            const teamSombreros = gs.__teamSombreros__;
-            const allTakes = [...teamSombreros[0], ...teamSombreros[1]];
-            
-            if (allTakes.length === 0) {
-                showToast('No sombrero takes to undo', 'warning');
-                return;
-            }
-            
-            const lastTakeHole = Math.max(...allTakes);
-            const lastTakeTeam = teamSombreros[0].includes(lastTakeHole) ? 0 : 1;
-            
-            // Only allow the team that made the last take to undo it
-            if (lastTakeTeam !== teamIndex) {
-                showToast('Can only undo your own team\'s most recent sombrero take', 'warning');
-                return;
-            }
-            
-            // Remove the last take and recalculate points
-            const takeIndex = teamSombreros[lastTakeTeam].indexOf(lastTakeHole);
-            if (takeIndex >= 0) {
-                teamSombreros[lastTakeTeam].splice(takeIndex, 1);
-            }
-            
-            // Recalculate all sombrero points from scratch
-            recalculateAllSombreroPoints();
-            
-            // Update UI immediately BEFORE saving to show instant feedback
-            renderLiveScoring();
-            renderSombreros(); // Update sombrero count tab immediately
-            
-            // Remove just this one take marker (value=null deletes it on merge/realtime)
-            saveCell('sombrero_take', lastTakeTeam, lastTakeHole + 1, null);
-            // Also physically delete the row so it doesn't linger
-            if (supabaseClient && isSupabaseEnabled && event.id && !String(event.id).startsWith('local_')) {
-                lastRealtimeUpdate = Date.now();
-                supabaseClient.from('live_scores').delete()
-                    .match({ event_id: event.id, round_idx: currentLiveRound, match_idx: currentLiveMatch, cell_type: 'sombrero_take', cell_key: String(lastTakeTeam), hole: lastTakeHole + 1 })
-                    .then(({ error }) => { if (error) console.error('Sombrero undo delete failed:', error); });
-            }
-            const teamName = isTeam0 ? "Team 1" : "Team 2";
-            showToast(`${teamName} undid sombrero take from hole ${lastTakeHole + 1}`, 'info', 3000);
+            return owners;
         }
 
-        function takeSombrero(playersJson, holeNumber) {
+        function ensureSombreroStructure() {
+            const matchLS = event.liveScores[currentLiveRound][currentLiveMatch];
+            if (!matchLS.__goldenSombreros__) matchLS.__goldenSombreros__ = {};
+            const gs = matchLS.__goldenSombreros__;
+            if (!gs.__teamSombreros__) gs.__teamSombreros__ = [[], []];
             const match = event.rounds[currentLiveRound].matches[currentLiveMatch];
+            [...match.team0Players, ...match.team1Players].forEach(p => {
+                if (!Array.isArray(gs[p])) gs[p] = Array(18).fill(0);
+            });
+            return gs;
+        }
+
+        function teamIndexForPlayers(players) {
+            const match = event.rounds[currentLiveRound].matches[currentLiveMatch];
+            return players.some(p => match.team0Players.includes(p)) ? 0 : 1;
+        }
+
+        // Undo removes THIS team's take on THIS hole — works on any hole, in any order
+        function undoSombrero(playersJson, holeNumber) {
             const players = JSON.parse(playersJson);
-            const gs = event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__;
-            
-            // Initialize the structure and any missing player arrays
-            if (!event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__) {
-                event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__ = {};
-            }
-            {
-                const gsInit = event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__;
-                const allPlayers = [...match.team0Players, ...match.team1Players];
-                allPlayers.forEach(p => {
-                    if (!Array.isArray(gsInit[p])) gsInit[p] = Array(18).fill(0);
-                });
-            }
-            
-            // Determine which team took the sombrero
-            const isTeam0 = players.some(p => match.team0Players.includes(p));
-            
-            // Call Golden Sombrero calculation
-            calculateGoldenSombreroPoints(holeNumber - 1, isTeam0 ? 0 : 1);
-            
-            // Update UI immediately BEFORE saving to show instant feedback
+            const gs = ensureSombreroStructure();
+            const teamIdx = teamIndexForPlayers(players);
+            const holeIdx = holeNumber - 1;
+            const arr = gs.__teamSombreros__[teamIdx];
+            const pos = arr.indexOf(holeIdx);
+            if (pos < 0) { showToast('Nothing to undo on this hole', 'warning'); return; }
+
+            arr.splice(pos, 1);
+            recalculateAllSombreroPoints();
             renderLiveScoring();
-            renderSombreros(); // Update sombrero count tab immediately
-            
-            // Save just this one take marker (team index + hole). value=1 means "taken"
-            saveCell('sombrero_take', isTeam0 ? 0 : 1, holeNumber, 1);
-            const teamName = isTeam0 ? "Team 1" : "Team 2";
-            showToast(`${teamName} took the Golden Sombrero on hole ${holeNumber}`, 'info', 3000);
+            renderSombreros();
+
+            // Tombstone (value=null) instead of a DELETE, so every phone gets the
+            // update via realtime and old event data can't resurrect it
+            saveCell('sombrero_take', teamIdx, holeNumber, null);
+            showToast(`${event.teams[teamIdx]?.name || 'Team'} sombrero removed from hole ${holeNumber}`, 'info', 2500);
+        }
+
+        // Take on a hole. Only one team can take it on a given hole, so taking it
+        // replaces the other team's take on that same hole.
+        function takeSombrero(playersJson, holeNumber) {
+            const players = JSON.parse(playersJson);
+            const gs = ensureSombreroStructure();
+            const teamIdx = teamIndexForPlayers(players);
+            const oppIdx = 1 - teamIdx;
+            const holeIdx = holeNumber - 1;
+
+            const oppArr = gs.__teamSombreros__[oppIdx];
+            const oppPos = oppArr.indexOf(holeIdx);
+            const replacedOpponent = oppPos >= 0;
+            if (replacedOpponent) oppArr.splice(oppPos, 1);
+
+            if (!gs.__teamSombreros__[teamIdx].includes(holeIdx)) {
+                gs.__teamSombreros__[teamIdx].push(holeIdx);
+            }
+
+            recalculateAllSombreroPoints();
+            renderLiveScoring();
+            renderSombreros();
+
+            if (replacedOpponent) saveCell('sombrero_take', oppIdx, holeNumber, null);
+            saveCell('sombrero_take', teamIdx, holeNumber, 1);
+            showToast(`${event.teams[teamIdx]?.name || 'Team'} took the Golden Sombrero on hole ${holeNumber}`, 'info', 2500);
         }
 
         function recalculateAllSombreroPoints() {
@@ -2569,48 +2564,12 @@
                 for (let h = 0; h < 18; h++) gs[p][h] = 0;
             });
             
-            // Replay all sombrero takes in chronological order
-            const teamSombreros = gs.__teamSombreros__;
-            let activeTeam = -1;
-            
-            for (let hole = 0; hole < 18; hole++) {
-                const team0TookSombrero = teamSombreros[0].includes(hole);
-                const team1TookSombrero = teamSombreros[1].includes(hole);
-                
-                // Switch active team when someone takes the sombrero
-                if (team0TookSombrero) activeTeam = 0;
-                if (team1TookSombrero) activeTeam = 1;
-                
-                // Award point to active team
-                if (activeTeam >= 0) {
-                    const teamPlayers = activeTeam === 0 ? match.team0Players : match.team1Players;
-                    teamPlayers.forEach(p => gs[p][hole] = 1);
-                }
-            }
-        }
-
-        function calculateGoldenSombreroPoints(newSombreroHole, newSombreroTeam) {
-            const match = event.rounds[currentLiveRound].matches[currentLiveMatch];
-            // Ensure the sombrero structure and per-player arrays exist
-            if (!event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__) {
-                event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__ = {};
-            }
-            const gs = event.liveScores[currentLiveRound][currentLiveMatch].__goldenSombreros__;
-            const allPlayers = [...match.team0Players, ...match.team1Players];
-            allPlayers.forEach(p => {
-                if (!Array.isArray(gs[p])) gs[p] = Array(18).fill(0);
+            const owners = sombreroOwnerByHole(gs.__teamSombreros__);
+            owners.forEach((owner, hole) => {
+                if (owner < 0) return;
+                const teamPlayers = owner === 0 ? match.team0Players : match.team1Players;
+                teamPlayers.forEach(p => gs[p][hole] = 1);
             });
-            
-            // Track which holes each team took the sombrero
-            if (!gs.__teamSombreros__) gs.__teamSombreros__ = [[], []]; // [team0holes, team1holes]
-            
-            // Add this new sombrero take
-            if (!gs.__teamSombreros__[newSombreroTeam].includes(newSombreroHole)) {
-                gs.__teamSombreros__[newSombreroTeam].push(newSombreroHole);
-            }
-            
-            // Recalculate all points from scratch to ensure consistency
-            recalculateAllSombreroPoints();
         }
 
         function kickoutCounterHTML(players, holeNumber, liveScores) {
@@ -2631,46 +2590,19 @@
                 </div>`;
         }
 
-        function canUndoSombrero(players, liveScores) {
-            const match = event.rounds[currentLiveRound].matches[currentLiveMatch];
+        // Can undo if THIS team took it on THIS hole
+        function canUndoSombrero(players, holeNumber, liveScores) {
             const gs = liveScores.__goldenSombreros__ || {};
-            const teamSombreros = gs.__teamSombreros__ || [[], []];
-            
-            // Determine which team these players belong to
-            const isTeam0 = players.some(p => match.team0Players.includes(p));
-            const teamIndex = isTeam0 ? 0 : 1;
-            
-            // Check if this team has the most recent sombrero take across both teams
-            const allTakes = [...teamSombreros[0], ...teamSombreros[1]];
-            if (allTakes.length === 0) return false;
-            
-            const lastTakeHole = Math.max(...allTakes);
-            const lastTakeTeam = teamSombreros[0].includes(lastTakeHole) ? 0 : 1;
-            
-            return lastTakeTeam === teamIndex;
+            const ts = gs.__teamSombreros__ || [[], []];
+            const teamIdx = teamIndexForPlayers(players);
+            return (ts[teamIdx] || []).includes(holeNumber - 1);
         }
 
+        // Wearing = owns the sombrero on the current hole (same rule as points)
         function checkWearingSombrero(players, currentHole, liveScores) {
-            const match = event.rounds[currentLiveRound].matches[currentLiveMatch];
             const gs = liveScores.__goldenSombreros__ || {};
-            const teamSombreros = gs.__teamSombreros__ || [[], []];
-            
-            // Determine which team these players belong to
-            const isTeam0 = players.some(p => match.team0Players.includes(p));
-            const teamIndex = isTeam0 ? 0 : 1;
-            const opponentIndex = isTeam0 ? 1 : 0;
-            
-            // Find the most recent sombrero take for each team up to current hole
-            const getLastSombrero = (teamIdx) => {
-                const takes = teamSombreros[teamIdx].filter(h => h < currentHole);
-                return takes.length > 0 ? Math.max(...takes) : -1;
-            };
-            
-            const teamLastSombrero = getLastSombrero(teamIndex);
-            const opponentLastSombrero = getLastSombrero(opponentIndex);
-            
-            // Team is wearing sombrero if they took it more recently than opponent
-            return teamLastSombrero >= 0 && (opponentLastSombrero < 0 || teamLastSombrero > opponentLastSombrero);
+            const owners = sombreroOwnerByHole(gs.__teamSombreros__);
+            return owners[currentHole - 1] === teamIndexForPlayers(players);
         }
 
         function goldenSombreroHTML(players, holeNumber, liveScores) {
@@ -2686,35 +2618,22 @@
             const isWearingSombrero = checkWearingSombrero(playerArr, holeNumber, liveScores);
             
             // Check if this team has the most recent sombrero take (for undo option)
-            const canUndo = canUndoSombrero(playerArr, liveScores);
+            const canUndo = canUndoSombrero(playerArr, holeNumber, liveScores);
             
             const playersJson = JSON.stringify(playerArr).replace(/"/g, "&quot;");
             const statusIndicator = isWearingSombrero 
                 ? '<span style="background:#f39c12;color:white;padding:2px 6px;border-radius:8px;font-size:0.7em;font-weight:700;margin-left:8px;">🎩 WEARING SOMBRERO</span>' 
                 : '';
             
-            // Don't show "Take Sombrero" button if team already has it
-            let buttons;
-            if (isWearingSombrero) {
-                // Team has sombrero - only show undo if they can
-                buttons = canUndo 
-                    ? `<button onclick="undoSombrero('${playersJson}')"
+            // Took it on THIS hole → Undo. Already wearing from earlier → nothing. Otherwise → Take.
+            let buttons = '';
+            if (canUndo) {
+                buttons = `<button onclick="undoSombrero('${playersJson}',${holeNumber})"
                                style="padding:6px 10px;border:2px solid #e74c3c;background:white;color:#e74c3c;border-radius:4px;font-size:0.8em;font-weight:600;cursor:pointer;">
                            Undo
-                       </button>`
-                    : '';
-            } else {
-                // Team doesn't have sombrero - show take button and undo if applicable
-                buttons = canUndo 
-                    ? `<button onclick="undoSombrero('${playersJson}')"
-                               style="padding:6px 10px;border:2px solid #e74c3c;background:white;color:#e74c3c;border-radius:4px;font-size:0.8em;font-weight:600;cursor:pointer;margin-right:6px;">
-                           Undo
-                       </button>
-                       <button onclick="takeSombrero('${playersJson}',${holeNumber})"
-                               style="padding:6px 12px;border:2px solid #f39c12;background:white;color:#f39c12;border-radius:4px;font-size:0.8em;font-weight:600;cursor:pointer;">
-                           Take Sombrero
-                       </button>`
-                    : `<button onclick="takeSombrero('${playersJson}',${holeNumber})"
+                       </button>`;
+            } else if (!isWearingSombrero) {
+                buttons = `<button onclick="takeSombrero('${playersJson}',${holeNumber})"
                                style="padding:6px 12px;border:2px solid #f39c12;background:white;color:#f39c12;border-radius:4px;font-size:0.8em;font-weight:600;cursor:pointer;">
                            Take Sombrero
                        </button>`;
@@ -3146,12 +3065,16 @@
 
             // Tear down realtime subscription from any previous event so its
             // cell updates don't bleed into the newly loaded event
-            if (typeof cellChannel !== 'undefined' && cellChannel && supabaseClient) {
+            if (cellChannel && supabaseClient) {
                 try { supabaseClient.removeChannel(cellChannel); } catch(e) {}
                 cellChannel = null;
             }
-            if (typeof activeRealtimeEventId !== 'undefined') activeRealtimeEventId = null;
-            if (typeof resyncPollTimer !== 'undefined' && resyncPollTimer) {
+            if (realtimeChannel && supabaseClient) {
+                try { supabaseClient.removeChannel(realtimeChannel); } catch(e) {}
+                realtimeChannel = null;
+            }
+            activeRealtimeEventId = null;
+            if (resyncPollTimer) {
                 clearInterval(resyncPollTimer);
                 resyncPollTimer = null;
             }
@@ -3674,70 +3597,6 @@
             container.innerHTML = html;
         }
 
-        function updateMatchResult(roundIndex, matchIndex, teamIndex, result) {
-            const match = event.rounds[roundIndex].matches[matchIndex];
-            
-            if (result === 'win') {
-                match.result = teamIndex;
-            } else if (result === 'tie') {
-                match.result = 0.5;
-            } else if (result === 'loss') {
-                match.result = teamIndex === 0 ? 1 : 0;
-            } else {
-                match.result = null;
-            }
-
-            calculateBlowoutBonus(roundIndex, matchIndex);
-            calculatePoints();
-            renderScoring();
-            renderStandings();
-        }
-
-        function updateStrokeScore(roundIndex, matchIndex, teamIndex, score) {
-            const match = event.rounds[roundIndex].matches[matchIndex];
-            
-            if (teamIndex === 0) {
-                match.team0Score = score ? parseInt(score) : null;
-            } else {
-                match.team1Score = score ? parseInt(score) : null;
-            }
-
-            // Determine winner in stroke play
-            if (match.team0Score !== null && match.team1Score !== null) {
-                if (match.team0Score < match.team1Score) {
-                    match.result = 0; // Team 0 wins (lower score)
-                } else if (match.team1Score < match.team0Score) {
-                    match.result = 1; // Team 1 wins (lower score)
-                } else {
-                    match.result = 0.5; // Tie
-                }
-            } else {
-                match.result = null;
-            }
-
-            calculatePoints();
-            renderScoring();
-            renderStandings();
-        }
-
-        function updateMargin(roundIndex, matchIndex, margin) {
-            const match = event.rounds[roundIndex].matches[matchIndex];
-            match.marginOfVictory = margin ? parseInt(margin) : null;
-            calculateBlowoutBonus(roundIndex, matchIndex);
-            calculatePoints();
-            renderScoring();
-            renderStandings();
-        }
-
-        function updateHoleFinished(roundIndex, matchIndex, hole) {
-            const match = event.rounds[roundIndex].matches[matchIndex];
-            match.holeFinished = hole ? parseInt(hole) : null;
-            calculateBlowoutBonus(roundIndex, matchIndex);
-            calculatePoints();
-            renderScoring();
-            renderStandings();
-        }
-
         function calculateBlowoutBonus(roundIndex, matchIndex) {
             const match = event.rounds[roundIndex].matches[matchIndex];
             
@@ -3932,7 +3791,6 @@
 
                 round.matches.forEach((match, matchIndex) => {
                     // Check if match is complete (same logic as calculatePoints)
-                    const liveData = getLiveMatchData(roundIndex, matchIndex);
                     let matchComplete = false;
                     
                     // If result is set, match is complete (either from live scoring or manual entry)
@@ -4182,162 +4040,6 @@
             }
         }
 
-        // Debounced, merge-aware save for live score changes.
-        // Re-fetches the latest blob from Supabase and merges ONLY liveScores
-        // (and sombrero/kickout data which live inside liveScores) so concurrent
-        // edits from multiple users don't clobber each other.
-        let _saveScoreTimer = null;
-        let _saveScoreInFlight = false;
-        let _saveScorePending = false;
-
-        function saveScoreChange() {
-            // Always persist locally right away
-            persistEventLocally();
-
-            // Debounce network saves (300ms) to batch rapid taps
-            if (_saveScoreTimer) clearTimeout(_saveScoreTimer);
-            _saveScoreTimer = setTimeout(() => {
-                doMergeSave();
-            }, 300);
-        }
-
-        async function doMergeSave() {
-            if (!supabaseClient || !isSupabaseEnabled) return;
-            if (!event.id || String(event.id).startsWith('local_')) {
-                // No real DB id yet — fall back to full save once to create the row
-                await saveCurrentEvent({ blobOnly: true });
-                return;
-            }
-
-            // If a save is already running, mark pending and bail — we'll re-run after
-            if (_saveScoreInFlight) { _saveScorePending = true; return; }
-            _saveScoreInFlight = true;
-
-            try {
-                showSyncStatus('Saving…', 'blue');
-
-                // 1) Fetch the freshest blob from the server
-                const { data: fresh, error: fetchErr } = await supabaseClient
-                    .from('events')
-                    .select('event_data')
-                    .eq('id', event.id)
-                    .single();
-
-                if (fetchErr) throw fetchErr;
-
-                let serverBlob = {};
-                try {
-                    serverBlob = typeof fresh.event_data === 'string'
-                        ? JSON.parse(fresh.event_data)
-                        : (fresh.event_data || {});
-                } catch(e) { serverBlob = {}; }
-
-                // 2) Merge: start from server state, then overlay OUR liveScores
-                //    (liveScores holds scores + __kickouts__ + __goldenSombreros__)
-                const merged = {
-                    teams:        serverBlob.teams        || event.teams        || [],
-                    rounds:       serverBlob.rounds       || event.rounds       || [],
-                    teamRosters:  serverBlob.teamRosters  || event.teamRosters  || [],
-                    liveScores:   mergeLiveScores(serverBlob.liveScores || {}, event.liveScores || {})
-                };
-
-                // 3) Adopt the merged result locally so we stay in sync
-                event.liveScores = merged.liveScores;
-
-                // 4) Write back
-                lastRealtimeUpdate = Date.now(); // suppress our own realtime echo
-                const { error: writeErr } = await supabaseClient
-                    .from('events')
-                    .update({ event_data: JSON.stringify(merged) })
-                    .eq('id', event.id);
-
-                if (writeErr) throw writeErr;
-
-                showSyncStatus('Saved ✓', 'green');
-            } catch(err) {
-                console.error('Merge save failed:', err);
-                showSyncStatus('Save failed', 'red');
-            } finally {
-                _saveScoreInFlight = false;
-                // If another change came in while we were saving, save again
-                if (_saveScorePending) {
-                    _saveScorePending = false;
-                    doMergeSave();
-                }
-            }
-        }
-
-        // Merge two liveScores objects. Round/match/player arrays are merged
-        // hole-by-hole: a non-null value wins. This means two users editing
-        // DIFFERENT holes both keep their entries instead of overwriting.
-        function mergeLiveScores(serverLS, localLS) {
-            const result = JSON.parse(JSON.stringify(serverLS || {}));
-
-            for (const roundKey of Object.keys(localLS || {})) {
-                if (!result[roundKey]) result[roundKey] = {};
-                for (const matchKey of Object.keys(localLS[roundKey])) {
-                    const localMatch = localLS[roundKey][matchKey];
-                    if (!result[roundKey][matchKey]) result[roundKey][matchKey] = {};
-                    const outMatch = result[roundKey][matchKey];
-
-                    for (const key of Object.keys(localMatch)) {
-                        const localVal = localMatch[key];
-
-                        if (Array.isArray(localVal)) {
-                            // Player score array (or kickout/sombrero array) — merge per hole
-                            const serverArr = Array.isArray(outMatch[key]) ? outMatch[key] : [];
-                            const mergedArr = [];
-                            const len = Math.max(localVal.length, serverArr.length);
-                            for (let i = 0; i < len; i++) {
-                                const lv = localVal[i];
-                                const sv = serverArr[i];
-                                // Prefer a real (non-null/undefined) local value; else keep server
-                                if (lv !== null && lv !== undefined && lv !== 0) {
-                                    mergedArr[i] = lv;
-                                } else if (sv !== null && sv !== undefined && sv !== 0) {
-                                    mergedArr[i] = sv;
-                                } else {
-                                    mergedArr[i] = (lv !== null && lv !== undefined) ? lv : (sv !== undefined ? sv : null);
-                                }
-                            }
-                            outMatch[key] = mergedArr;
-                        } else if (localVal && typeof localVal === 'object') {
-                            // Nested object like __kickouts__ / __goldenSombreros__
-                            outMatch[key] = mergeNestedScoreObject(outMatch[key] || {}, localVal);
-                        } else {
-                            // Scalar — take local if present
-                            outMatch[key] = (localVal !== undefined) ? localVal : outMatch[key];
-                        }
-                    }
-                }
-            }
-            return result;
-        }
-
-        function mergeNestedScoreObject(serverObj, localObj) {
-            const out = JSON.parse(JSON.stringify(serverObj || {}));
-            for (const k of Object.keys(localObj || {})) {
-                const lv = localObj[k];
-                if (Array.isArray(lv)) {
-                    const sv = Array.isArray(out[k]) ? out[k] : [];
-                    const merged = [];
-                    const len = Math.max(lv.length, sv.length);
-                    for (let i = 0; i < len; i++) {
-                        const a = lv[i], b = sv[i];
-                        if (a !== null && a !== undefined && a !== 0) merged[i] = a;
-                        else if (b !== null && b !== undefined && b !== 0) merged[i] = b;
-                        else merged[i] = (a !== undefined ? a : (b !== undefined ? b : 0));
-                    }
-                    out[k] = merged;
-                } else if (lv && typeof lv === 'object') {
-                    out[k] = mergeNestedScoreObject(out[k] || {}, lv);
-                } else {
-                    out[k] = (lv !== undefined) ? lv : out[k];
-                }
-            }
-            return out;
-        }
-
         // ════════════════════════════════════════════════════════════════════
         //  PER-CELL SAVES — each score/kickout/sombrero is ONE tiny DB row.
         //  Table: live_scores (see SQL setup). Because each cell is its own row,
@@ -4368,9 +4070,21 @@
             // row so they're safe. The resync refreshes everything else around it.
             const idleGap = Date.now() - lastInteractionAt;
             lastInteractionAt = Date.now();
+            const pendingRow = {
+                round_idx: currentLiveRound, match_idx: currentLiveMatch,
+                cell_type: cellType, cell_key: String(cellKey), hole: hole,
+                value: (value === null || value === undefined) ? null : Number(value)
+            };
             if (idleGap > 15000) {
                 reconnectRealtime();
                 await resyncFromServer('save-after-idle', true); // block + await before saving
+                // The resync pulled server data that doesn't include this change yet —
+                // re-apply it so the tap isn't visually reverted
+                applyCellToLiveScores(pendingRow);
+                if (cellType === 'sombrero_take') rebuildAllSombreroPointsFromTakes();
+                calculatePoints();
+                renderLiveScoring();
+                renderSombreros();
             }
             // If a blocking resync is in flight, wait for it to finish
             let waited = 0;
@@ -4539,25 +4253,16 @@
                     if (!match) return;
                     const allPlayers = [...match.team0Players, ...match.team1Players];
                     allPlayers.forEach(p => { if (!Array.isArray(gs[p])) gs[p] = Array(18).fill(0); else gs[p].fill(0); });
-                    let activeTeam = -1;
-                    for (let hole = 0; hole < 18; hole++) {
-                        if (gs.__teamSombreros__[0].includes(hole)) activeTeam = 0;
-                        if (gs.__teamSombreros__[1].includes(hole)) activeTeam = 1;
-                        if (activeTeam >= 0) {
-                            const tp = activeTeam === 0 ? match.team0Players : match.team1Players;
-                            tp.forEach(p => { if (gs[p]) gs[p][hole] = 1; });
-                        }
-                    }
+                    sombreroOwnerByHole(gs.__teamSombreros__).forEach((owner, hole) => {
+                        if (owner < 0) return;
+                        const tp = owner === 0 ? match.team0Players : match.team1Players;
+                        tp.forEach(p => { if (gs[p]) gs[p][hole] = 1; });
+                    });
                 });
             });
         }
 
         // Subscribe to per-cell realtime updates for an event
-        let cellChannel = null;
-        let activeRealtimeEventId = null;
-        let resyncPollTimer = null;
-        let lastResyncAt = 0;
-
         function subscribeToCellUpdates(eventId) {
             if (!supabaseClient || !eventId) return;
 
@@ -4597,8 +4302,6 @@
             startResyncPoll();
             return cellChannel;
         }
-
-        let resyncInFlight = false;
 
         function showResyncOverlay() {
             const el = document.getElementById('resyncOverlay');
@@ -4654,6 +4357,7 @@
         function reconnectRealtime() {
             if (!supabaseClient || !activeRealtimeEventId) return;
             subscribeToCellUpdates(activeRealtimeEventId);
+            subscribeToRealtimeUpdates(activeRealtimeEventId); // setup changes socket dies too
         }
 
         function startResyncPoll() {
@@ -4899,7 +4603,6 @@
                     console.log('Saving rounds for event ID:', dbEventId);
                     
                     for (const round of eventData.rounds) {
-                        const roundId = round.id && !round.id.toString().startsWith('local_') ? round.id : null;
                         
                         const roundPayload = {
                             event_id: dbEventId,
@@ -5124,6 +4827,31 @@
             }
         }
         
+        // Promise-based confirm dialog. Resolves true on confirm, false otherwise.
+        function showCustomModal(title, bodyHtml, confirmText = 'OK', cancelText = 'Cancel') {
+            return new Promise(resolve => {
+                const overlay = document.createElement('div');
+                overlay.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:16px;';
+                overlay.innerHTML = `
+                    <div style="background:white;border-radius:14px;max-width:420px;width:100%;max-height:85vh;overflow:auto;box-shadow:0 20px 40px rgba(0,0,0,0.3);">
+                        <div data-act="title" style="padding:18px 20px 10px;font-weight:700;font-size:1.15em;color:#2c3e50;"></div>
+                        <div style="padding:0 20px 14px;color:#444;line-height:1.5;">${bodyHtml}</div>
+                        <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px 20px 18px;border-top:1px solid #eee;">
+                            <button class="btn btn-secondary" data-act="cancel"></button>
+                            <button class="btn" data-act="ok"></button>
+                        </div>
+                    </div>`;
+                overlay.querySelector('[data-act="title"]').textContent = title;
+                overlay.querySelector('[data-act="cancel"]').textContent = cancelText;
+                overlay.querySelector('[data-act="ok"]').textContent = confirmText;
+                const close = (val) => { overlay.remove(); resolve(val); };
+                overlay.querySelector('[data-act="ok"]').onclick = () => close(true);
+                overlay.querySelector('[data-act="cancel"]').onclick = () => close(false);
+                overlay.onclick = (e) => { if (e.target === overlay) close(false); };
+                document.body.appendChild(overlay);
+            });
+        }
+
         function showToast(message, type = 'info', duration = 3000) {
             const colors = { success: '#27ae60', error: '#e74c3c', warning: '#f39c12', info: '#3498db' };
             const icons  = { success: '✓', error: '✗', warning: '⚠', info: 'ℹ' };
@@ -5150,6 +4878,8 @@
         }
 
         function showSyncStatus(message, color) {
+            // Sync status pill is a dev aid only — hidden in production
+            if (!IS_LOCAL_DEV) return;
             let statusEl = document.getElementById('syncStatus');
             if (!statusEl) {
                 statusEl = document.createElement('div');
@@ -5179,6 +4909,12 @@
             statusEl.style.backgroundColor = colors[color] || colors.blue;
             statusEl.textContent = message;
             statusEl.style.opacity = '1';
+
+            // Always auto-hide. In-progress messages ("Saving…") get a longer
+            // safety timeout in case no follow-up status ever arrives.
+            if (window._syncStatusTimer) clearTimeout(window._syncStatusTimer);
+            const inProgress = /…|\.\.\./.test(message);
+            window._syncStatusTimer = setTimeout(hideSyncStatus, inProgress ? 8000 : 2000);
         }
         
         function hideSyncStatus() {
@@ -5323,8 +5059,9 @@
                 renderStandings();
                 renderSombreros();
                 renderKickouts();
-                // Subscribe to per-cell realtime updates
+                // Subscribe to per-cell score updates and to setup changes
                 subscribeToCellUpdates(event.id);
+                subscribeToRealtimeUpdates(event.id);
             }
             switchTab('livescoreboard');
         }
@@ -5363,13 +5100,17 @@
             const container = document.getElementById('savedEventsList');
             const statusEl = document.getElementById('eventListStatus');
             
-            // Show where events are loaded from
-            if (isSupabaseEnabled && supabaseClient) {
-                statusEl.textContent = '☁️ Loading from Supabase';
-                statusEl.style.color = '#3498db';
-            } else {
-                statusEl.textContent = '💾 Loading from local storage';
-                statusEl.style.color = '#7f8c8d';
+            // Data-source label is a dev-only aid; hidden in production
+            if (statusEl) {
+                if (IS_LOCAL_DEV) {
+                    statusEl.style.display = '';
+                    statusEl.textContent = (isSupabaseEnabled && supabaseClient)
+                        ? '☁️ [dev] Supabase' : '💾 [dev] local storage';
+                    statusEl.style.color = '#7f8c8d';
+                } else {
+                    statusEl.style.display = 'none';
+                    statusEl.textContent = '';
+                }
             }
             
             if (savedEvents.length === 0) {
@@ -5423,14 +5164,14 @@
             events.sort((a, b) => new Date(b.savedDate) - new Date(a.savedDate)).forEach(evt => {
                 const savedDate = new Date(evt.savedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 const isLocalOnly = typeof evt.id === 'string' && evt.id.startsWith('local_');
-                const sourceIcon = isLocalOnly ? '💾' : '☁️';
-                const sourceColor = isLocalOnly ? '#95a5a6' : '#3498db';
+                // Storage icon is a dev aid only
+                const sourceIcon = IS_LOCAL_DEV ? (isLocalOnly ? '💾 ' : '☁️ ') : '';
                 
                 html += `
                     <div style="background:white;padding:12px 14px;border-radius:10px;border:2px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center;gap:10px;">
                         <div style="flex:1;min-width:0;">
                             <div style="font-weight:700;color:#2c3e50;font-size:0.95em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                                ${sourceIcon} ${evt.name}
+                                ${sourceIcon}${evt.name}
                             </div>
                             <div style="font-size:0.78em;color:#7f8c8d;margin-top:2px;">
                                 ${evt.rounds ? evt.rounds.length : 0} round${evt.rounds && evt.rounds.length > 1 ? 's' : ''} • ${evt.scoringType === 'match' ? 'Match Play' : 'Stroke Play'} • ${savedDate}
