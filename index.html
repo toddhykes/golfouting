@@ -713,6 +713,7 @@
         // ── Realtime state ───────────────────────────────────────────────────────
         let realtimeChannel = null;
         let lastRealtimeUpdate = null; // suppress echo of our own saves
+        let loadedEventName = null;    // name of the saved event currently loaded (null = brand-new event)
         let cellChannel = null;
         let activeRealtimeEventId = null;
         let resyncPollTimer = null;
@@ -805,13 +806,49 @@
             }
         }
 
-        function startNewEvent() {
-            if (event.name && !confirm(`Start a new event? "${event.name}" will remain saved.`)) return;
-            clearAllData();
-            updateEventBanner();
+        async function startNewEvent() {
+            if (loadedEventName) {
+                const ok = await showCustomModal('Start a new event?',
+                    `<p>"${loadedEventName}" stays saved. The new event starts with empty rosters and no matches.</p>`,
+                    'Start New Event', 'Cancel');
+                if (!ok) return;
+            }
+            resetForNewEvent();
             switchTab('setup');
-            document.getElementById('eventName').value = '';
             showToast('Ready to create a new event', 'info');
+        }
+
+        // Clear the loaded event and every form/roster that showed it.
+        // keepSetupForm: leave the setup tab fields (name, rounds, courses) as typed.
+        function resetForNewEvent({ keepSetupForm = false } = {}) {
+            // Courses shown on the setup form carry over when we keep the form
+            const carriedCourses = {};
+            if (keepSetupForm && event.rounds) {
+                event.rounds.forEach((r, i) => { if (r && r.course) carriedCourses[i] = r.course; });
+            }
+
+            clearAllData();
+            window._pendingCourses = carriedCourses;
+
+            if (!keepSetupForm) {
+                document.getElementById('eventName').value = '';
+                document.getElementById('numRounds').value = 1;
+                document.getElementById('scoringType').value = 'match';
+                document.getElementById('blowoutBonus').checked = false;
+                updateRoundFormats();
+            }
+
+            // Rosters tab
+            ['team0Name','team1Name','team0NewPlayer','team0NewPhone','team1NewPlayer','team1NewPhone','broadcastMsg']
+                .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+            const bs = document.getElementById('broadcastStatus'); if (bs) bs.textContent = '';
+            renderBothRosters();
+
+            renderMatchups();
+            renderLiveScoreboardTab();
+            renderKickouts();
+            renderSombreros();
+            updateEventBanner();
         }
 
         function switchTab(tabName, clickEvent) {
@@ -1534,11 +1571,23 @@
             return null;
         }
 
-                function saveEventSetup() {
+                async function saveEventSetup() {
             const name = document.getElementById('eventName').value.trim();
             if (!name) {
                 showToast('Please enter an event name', 'warning');
                 return;
+            }
+
+            if (loadedEventName && loadedEventName.toLowerCase() !== name.toLowerCase()) {
+                const ok = await showCustomModal('Create a new event?',
+                    `<p>You changed the name from "${loadedEventName}" to "${name}".</p>
+                     <p>This creates a new event with empty rosters. "${loadedEventName}" stays saved.</p>`,
+                    'Create New Event', 'Cancel');
+                if (!ok) {
+                    document.getElementById('eventName').value = loadedEventName;
+                    return;
+                }
+                resetForNewEvent({ keepSetupForm: true });
             }
             
             event.name = name;
@@ -3062,6 +3111,7 @@
             currentLiveRound = null;
             currentLiveMatch = null;
             currentLiveHole = 1;
+            loadedEventName = null;
 
             // Tear down realtime subscription from any previous event so its
             // cell updates don't bleed into the newly loaded event
@@ -3121,7 +3171,7 @@
             // If this name matches an already-loaded event, preserve its ID and
             // treat this as an update — don't block or clear data.
             const savedEvents = getSavedEvents();
-            const isUpdatingCurrent = event.name && event.name.toLowerCase() === name.toLowerCase();
+            const isUpdatingCurrent = !!loadedEventName && loadedEventName.toLowerCase() === name.toLowerCase();
             const existingOther = !isUpdatingCurrent && savedEvents.find(e =>
                 e.name.toLowerCase() === name.toLowerCase()
             );
@@ -3132,7 +3182,7 @@
             }
 
             // Snapshot everything we need to preserve BEFORE clearAllData wipes state
-            const preservedId    = event.id;
+            const preservedId    = isUpdatingCurrent ? event.id : null; // never reuse another event's id
             const previousRounds = isUpdatingCurrent ? JSON.parse(JSON.stringify(event.rounds || [])) : [];
             const savedTeamRosters = JSON.parse(JSON.stringify(teamRosters));
 
@@ -3185,6 +3235,7 @@
                 });
             }
 
+            loadedEventName = name;
             syncEventTeamsFromRosters();
             renderMatchups();
             switchTab('matchups');
@@ -4980,6 +5031,7 @@
             
             // Load the event
             event = { ...savedEvent };
+            loadedEventName = event.name || null;
             
             // Backward compatibility: convert 'days' to 'rounds' if needed
             if (event.days && !event.rounds) {
