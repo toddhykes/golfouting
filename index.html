@@ -3145,7 +3145,7 @@
             console.log('All data cleared', skipHTMLClear ? '(HTML preserved)' : '');
         }
 
-        function createGolfEvent() {
+        async function createGolfEvent() {
             const name = document.getElementById('eventName').value.trim();
             const numRounds = parseInt(document.getElementById('numRounds').value);
             const scoringType = document.getElementById('scoringType').value;
@@ -3170,11 +3170,20 @@
 
             // If this name matches an already-loaded event, preserve its ID and
             // treat this as an update — don't block or clear data.
-            const savedEvents = getSavedEvents();
             const isUpdatingCurrent = !!loadedEventName && loadedEventName.toLowerCase() === name.toLowerCase();
-            const existingOther = !isUpdatingCurrent && savedEvents.find(e =>
-                e.name.toLowerCase() === name.toLowerCase()
-            );
+            let existingOther = null;
+            if (!isUpdatingCurrent) {
+                // Check every saved event — this phone's AND the server's — so a name
+                // already used on another phone isn't silently overwritten
+                const btn = document.getElementById('createEventBtn');
+                if (btn) btn.disabled = true;
+                try {
+                    const allEvents = [...getSavedEvents(), ...(await getAllSavedEvents())];
+                    existingOther = allEvents.find(e => (e.name || '').toLowerCase() === name.toLowerCase());
+                } finally {
+                    if (btn) btn.disabled = false;
+                }
+            }
 
             if (existingOther) {
                 showToast(`An event named "${name}" already exists — choose a different name.`, 'warning');
@@ -3991,7 +4000,13 @@
                 
                 if (supabaseEvents.length > 0) {
                     console.log(`Found ${supabaseEvents.length} events in Supabase`);
-                    return supabaseEvents;
+                    // Include events saved on this device that haven't reached the server yet
+                    // (still have a local_ id), so a just-created event never disappears.
+                    const serverNames = new Set(supabaseEvents.map(e => (e.name || '').toLowerCase()));
+                    const unsynced = getSavedEvents().filter(e =>
+                        typeof e.id === 'string' && e.id.startsWith('local_') &&
+                        !serverNames.has((e.name || '').toLowerCase()));
+                    return [...unsynced, ...supabaseEvents];
                 } else {
                     console.log('No events in Supabase, showing localStorage events');
                     // Fallback to localStorage if Supabase is empty
@@ -4494,6 +4509,7 @@
             if (isSupabaseEnabled) {
                 lastRealtimeUpdate = Date.now(); // suppress echo of our own save
                 await saveEventToSupabase(eventToSave, opts);
+                refreshEventsList();
             }
         }
         
@@ -4552,6 +4568,17 @@
 
                     savedEvent = upsertResult.data;
                     eventError = upsertResult.error;
+
+                    // 42P10 = no unique constraint on event_name to upsert against
+                    if (eventError && eventError.code === '42P10') {
+                        const insertResult = await supabaseClient
+                            .from('events')
+                            .insert(eventPayload)
+                            .select()
+                            .single();
+                        savedEvent = insertResult.data;
+                        eventError = insertResult.error;
+                    }
 
                     // If upsert succeeded, pin the real Supabase ID locally so future
                     // saves go through the UPDATE path and never hit this branch again.
