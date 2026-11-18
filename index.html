@@ -516,6 +516,63 @@
             color: var(--ink);
         }
         .policy-doc { background: var(--paper); border-radius: 12px; padding: 20px; }
+
+        /* Strokes: every match listed by day */
+        .list-heading { margin: 8px 0 10px; }
+        .day-list { margin-bottom: 18px; }
+        .day-list-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding-bottom: 6px; border-bottom: 2px solid var(--ink); }
+        .day-list-head b { font-family: var(--display); font-size: 20px; }
+        .day-list-head span { color: var(--muted); font-size: 14px; }
+        .score-list { list-style: none; }
+        .score-line {
+            width: 100%; display: grid; grid-template-columns: 22px 1fr 1fr 58px; gap: 10px; align-items: end;
+            padding: 9px 0; border: 0; border-bottom: 1px solid var(--rule); background: none;
+            font: inherit; color: inherit; text-align: left; cursor: pointer;
+        }
+        button.score-line:hover { background: var(--mist); }
+        .sl-num { font-family: var(--display); font-weight: 700; font-size: 18px; color: var(--muted); align-self: center; }
+        .sl-side { min-width: 0; display: flex; flex-direction: column; }
+        .sl-side.t1 { align-items: flex-end; text-align: right; }
+        .sl-names { font-size: 13px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+        .sl-side.t0 .sl-names { color: var(--t0); }
+        .sl-side.t1 .sl-names { color: var(--t1); }
+        .sl-strokes { font-family: var(--display); font-weight: 600; font-size: 26px; line-height: 1.05; font-variant-numeric: tabular-nums; }
+        .sl-strokes small { font-family: var(--body); font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+        .sl-side.low .sl-strokes { font-weight: 700; }
+        .sl-side.t0.low .sl-strokes { color: var(--t0); }
+        .sl-side.t1.low .sl-strokes { color: var(--t1); }
+        .sl-status { font-size: 12px; color: var(--muted); text-align: right; align-self: center; }
+        .score-line.idle { align-items: center; }
+        .score-line.day-total { cursor: default; border-bottom: 0; }
+        .score-line.day-total .sl-names { color: var(--muted); }
+        .score-line.day-total .sl-status { font-weight: 700; color: var(--ink); }
+
+        /* ── Locked events ── */
+        .lock-badge { display: inline-block; vertical-align: 3px; margin-left: 8px; font: 700 12px var(--body); color: var(--ink); background: var(--flag); border-radius: 999px; padding: 2px 9px; }
+        body[data-mode="events"] .lock-badge, body[data-mode="prep"] .lock-badge { color: #16231D; }
+        .event-row .lock-badge { margin-left: 0; margin-top: 4px; }
+        .lock-note { display: none; max-width: 760px; margin: 0 auto; padding: 7px 16px 9px; font-size: 14px; font-weight: 600; color: var(--flag); }
+        body.event-locked:not([data-mode="events"]) .lock-note { display: block; }
+        .lock-panel { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--rule); }
+        .lock-panel p { color: var(--muted); margin: 4px 0 12px; max-width: 60ch; }
+        .board-lock { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--turf-line); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; color: rgba(246,247,242,0.8); }
+        .board-lock .btn-secondary { color: var(--board); box-shadow: inset 0 0 0 1.5px var(--board); }
+        .board-lock .btn-secondary:hover { background: rgba(246,247,242,0.08); }
+        .board-lock.locked strong { color: var(--flag); }
+        /* View-only: hide edit controls everywhere while locked */
+        body.event-locked .add-row,
+        body.event-locked .next-step,
+        body.event-locked #settingsHost-prep #createEventBtn,
+        body.event-locked #settingsHost-prep .search-row,
+        body.event-locked #settingsHost-prep .hint,
+        body.event-locked [onclick^="recordKickout"],
+        body.event-locked [onclick^="takeSombrero"],
+        body.event-locked [onclick^="undoSombrero"],
+        body.event-locked [onclick^="clearCourse"],
+        body.event-locked [onclick^="unlockScorecard"],
+        body.event-locked [onclick*="renderSelectedCourse"] { display: none !important; }
+        body.event-locked .score-btn { pointer-events: none; }
+        body.event-locked .score-btn:not(.selected) { opacity: 0.3; }
     </style>
 
     <!-- Supabase SDK -->
@@ -556,6 +613,7 @@
             <button data-tab="eventsettings" onclick="switchTab('eventsettings')">Rounds &amp; courses<span class="count" id="cnt-eventsettings"></span></button>
             <button data-tab="messages" onclick="switchTab('messages')">Messages</button>
         </nav>
+        <div class="lock-note" id="lockNote" role="status"></div>
         <div id="supabaseStatus" style="display:none;"></div>
     </header>
 
@@ -740,6 +798,7 @@
             <h2 class="page-title">Rounds &amp; courses</h2>
             <p class="lede">Change the event name, team names, rounds and courses. Scores already entered are kept.</p>
             <div id="settingsHost-prep"></div>
+            <div class="lock-panel" id="lockPanel"></div>
         </section>
 
         <section id="messages" class="tab-content">
@@ -891,6 +950,11 @@
                         // which can be stale.
                         if (incoming.rounds) event.rounds = incoming.rounds;
                         if (incoming.teams) event.teams = incoming.teams;
+                        // Another phone locked or unlocked the event
+                        event.locked = !!incoming.locked;
+                        event.lockedAt = incoming.lockedAt || null;
+                        applyLockState();
+                        updateEventBanner();
 
                         rebuildAllSombreroPointsFromTakes();
                         calculatePoints();
@@ -984,6 +1048,7 @@
         // ── Google Places course search ───────────────────────────────────────────
 
         async function searchCourses(roundNum) {
+            if (guardLocked()) return;
             const query = document.getElementById(`courseSearch${roundNum}`).value.trim();
             if (!query) { showToast('Enter a course name, city, or both', 'warning'); return; }
 
@@ -1239,6 +1304,7 @@
         }
 
         async function selectCourse(roundNum, idx) {
+            if (guardLocked()) return;
             const resultsEl = document.getElementById(`courseResults${roundNum}`);
             const courses = resultsEl._courses;
             if (!courses || !courses[idx]) return;
@@ -1496,6 +1562,7 @@
         }
 
         function updateScorecardCell(roundNum, holeIndex, field, value) {
+            if (guardLocked()) return;
             const course = getStoredCourse(roundNum);
             if (!course) return;
             const parsed = field === 'par' ? parseInt(value) : parseInt(value) || 0;
@@ -1504,6 +1571,7 @@
         }
 
         function unlockScorecard(roundNum) {
+            if (guardLocked()) return;
             const course = getStoredCourse(roundNum);
             if (!course) return;
             course.locked = false;
@@ -1517,6 +1585,7 @@
         }
 
         async function saveScorecardEdits(roundNum) {
+            if (guardLocked()) return;
             const course = getStoredCourse(roundNum);
             if (!course) return;
             course.locked = true;
@@ -1537,6 +1606,7 @@
         }
 
         function clearCourse(roundNum) {
+            if (guardLocked()) return;
             const roundIndex = roundNum - 1;
             if (event.rounds && event.rounds[roundIndex]) {
                 event.rounds[roundIndex].course = null;
@@ -1588,6 +1658,7 @@
         }
 
         async function addPlayer(teamIndex) {
+            if (guardLocked()) return;
             const inputId = `team${teamIndex}NewPlayer`;
             const phoneId = `team${teamIndex}NewPhone`;
             const playerName = document.getElementById(inputId).value.trim();
@@ -1628,6 +1699,7 @@
         }
 
         function removePlayer(teamIndex, playerIndex) {
+            if (guardLocked()) return;
             teamRosters[teamIndex].players.splice(playerIndex, 1);
             if (teamRosters[teamIndex].captain === playerIndex) {
                 teamRosters[teamIndex].captain = null;
@@ -1644,6 +1716,7 @@
         }
 
         function setCaptain(teamIndex, playerIndex) {
+            if (guardLocked()) return;
             teamRosters[teamIndex].captain = playerIndex;
             renderRoster(teamIndex);
             if (event.name) {
@@ -1753,6 +1826,7 @@
         }
 
         async function addPhoneToPlayer(teamIndex, playerIndex) {
+            if (guardLocked()) return;
             const player = teamRosters[teamIndex].players[playerIndex];
             const phone = await askText('Add mobile', `Mobile number for ${player.name}`, '(555) 123-4567', 'tel', 'Next');
             if (!phone) return;
@@ -1781,6 +1855,7 @@
         }
 
         async function togglePlayerOptOut(teamIndex, playerIndex) {
+            if (guardLocked()) return;
             const player = teamRosters[teamIndex].players[playerIndex];
             if (player.smsOptedOut) {
                 const ok = await showCustomModal('Turn texts back on?',
@@ -2336,6 +2411,7 @@
             return html;
         }
         function recordKickout(playersJson, holeNumber, delta) {
+            if (guardLocked()) return;
             const players = JSON.parse(playersJson);
             const ko = event.liveScores[currentLiveRound][currentLiveMatch].__kickouts__;
             players.forEach(player => {
@@ -2383,6 +2459,7 @@
 
         // Undo removes THIS team's take on THIS hole — works on any hole, in any order
         function undoSombrero(playersJson, holeNumber) {
+            if (guardLocked()) return;
             const players = JSON.parse(playersJson);
             const gs = ensureSombreroStructure();
             const teamIdx = teamIndexForPlayers(players);
@@ -2405,6 +2482,7 @@
         // Take on a hole. Only one team can take it on a given hole, so taking it
         // replaces the other team's take on that same hole.
         function takeSombrero(playersJson, holeNumber) {
+            if (guardLocked()) return;
             const players = JSON.parse(playersJson);
             const gs = ensureSombreroStructure();
             const teamIdx = teamIndexForPlayers(players);
@@ -2743,6 +2821,7 @@
         }
 
         function recordPlayerScore(playerName, holeNumber, score) {
+            if (guardLocked()) return;
             initLiveScores(currentLiveRound, currentLiveMatch); // ensure arrays exist
             const scores = event.liveScores[currentLiveRound][currentLiveMatch][playerName];
             scores[holeNumber - 1] = score;
@@ -2756,6 +2835,7 @@
         }
 
         function recordTeamScore(teamIndex, holeNumber, score) {
+            if (guardLocked()) return;
             initLiveScores(currentLiveRound, currentLiveMatch); // ensure arrays exist
             const match = event.rounds[currentLiveRound].matches[currentLiveMatch];
             const teamPlayers = teamIndex === 0 ? match.team0Players : match.team1Players;
@@ -3099,6 +3179,7 @@
 
 
         function addMatch(roundIndex) {
+            if (guardLocked()) return;
             const round = event.rounds[roundIndex];
             const team0Selected = [];
             const team1Selected = [];
@@ -3147,6 +3228,7 @@
         }
 
         async function deleteMatch(roundIndex, matchIndex) {
+            if (guardLocked()) return;
             const ok = await showCustomModal('Remove match?',
                 `<p>Match ${matchIndex + 1} and any scores already entered for it will be removed.</p>`, 'Remove match', 'Keep it');
             if (!ok) return;
@@ -3800,6 +3882,7 @@
         let lastInteractionAt = Date.now();
 
         async function saveCell(cellType, cellKey, hole, value) {
+            if (event && event.locked) return;
             // If it's been a while since the last interaction, the local view may be
             // stale (mobile backgrounding killed realtime). Reconnect + resync first,
             // but DON'T block this specific write — per-cell writes only touch their own
@@ -4142,7 +4225,9 @@
                     teams: event.teams,
                     rounds: event.rounds,
                     liveScores: event.liveScores,
-                    teamRosters: event.teamRosters
+                    teamRosters: event.teamRosters,
+                    locked: !!event.locked,
+                    lockedAt: event.lockedAt || null
                 };
                 if (idx >= 0) saved[idx] = localCopy; else saved.push(localCopy);
                 localStorage.setItem('golfEvents', JSON.stringify(saved));
@@ -4153,6 +4238,7 @@
 
         async function saveCurrentEvent(opts = {}) {
             if (!event.name) return;
+            if (event.locked && !opts.allowLocked) return;   // locked events are read-only
             
             const savedEvents = getSavedEvents();
             const eventToSave = {
@@ -4205,7 +4291,9 @@
                     teams: eventData.teams || [],
                     rounds: eventData.rounds || [],
                     liveScores: eventData.liveScores || {},
-                    teamRosters: eventData.teamRosters || []
+                    teamRosters: eventData.teamRosters || [],
+                    locked: !!eventData.locked,
+                    lockedAt: eventData.lockedAt || null
                 });
                 
                 const eventPayload = {
@@ -4679,7 +4767,9 @@
                             teams: blob.teams || [],
                             rounds: blob.rounds || [],
                             liveScores: blob.liveScores || {},
-                            teamRosters: blob.teamRosters || []
+                            teamRosters: blob.teamRosters || [],
+                            locked: !!blob.locked,
+                            lockedAt: blob.lockedAt || null
                         };
                     }
 
@@ -4780,7 +4870,7 @@
             if (event.id && !String(event.id).startsWith('local_')) {
                 // Migrate any blob-only scores into the cell table (one-time, idempotent),
                 // then load all per-cell scores as the authoritative source.
-                await backfillBlobScoresToCells(event.id);
+                if (!event.locked) await backfillBlobScoresToCells(event.id);
                 await loadLiveScoreCells(event.id);
                 calculatePoints();
                 renderLiveScoring();
@@ -4886,6 +4976,80 @@
                 .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
+        // ── Locking a finished event: view-only, can't be deleted ──
+        function isLocked() { return !!(event && event.locked); }
+
+        function guardLocked() {
+            if (!isLocked()) return false;
+            showToast('This event is locked. Unlock it in Prep, Rounds & courses, to make changes.', 'warning', 3500);
+            return true;
+        }
+
+        function fmtLockDate(iso) {
+            if (!iso) return '';
+            return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
+        function applyLockState() {
+            const locked = hasOpenEvent() && isLocked();
+            document.body.classList.toggle('event-locked', locked);
+            const note = document.getElementById('lockNote');
+            if (note) note.textContent = locked
+                ? `Locked${event.lockedAt ? ' on ' + fmtLockDate(event.lockedAt) : ''}. Everything is view-only.`
+                : '';
+            // Settings form: read-only while locked (only matters when it's showing in Prep)
+            const form = document.getElementById('settingsForm');
+            if (form) {
+                const inPrep = form.parentNode && form.parentNode.id === 'settingsHost-prep';
+                form.querySelectorAll('input, select, textarea, button').forEach(el => { el.disabled = locked && inPrep; });
+            }
+            renderLockPanel();
+        }
+
+        function renderLockPanel() {
+            const panel = document.getElementById('lockPanel');
+            if (!panel) return;
+            if (!hasOpenEvent()) { panel.innerHTML = ''; return; }
+            panel.innerHTML = isLocked()
+                ? `<h3>Event locked</h3>
+                   <p>Locked${event.lockedAt ? ' on ' + fmtLockDate(event.lockedAt) : ''}. Scores, players, matchups and settings are view-only, and the event can't be deleted.</p>
+                   <button class="btn btn-secondary" onclick="unlockEvent()">Unlock event</button>`
+                : `<h3>Lock event</h3>
+                   <p>When the event is over, lock it. Everything stays viewable, but nothing can be changed and the event can't be deleted.</p>
+                   <button class="btn" onclick="lockEvent()">Lock event</button>`;
+        }
+
+        async function lockEvent() {
+            if (!hasOpenEvent() || isLocked()) return;
+            const ok = await showCustomModal('Lock this event?',
+                `<p><strong>${esc(event.name)}</strong> becomes view-only: no score, player, matchup or settings changes, and it can't be deleted.</p>
+                 <p>You can unlock it later from Prep, Rounds &amp; courses.</p>`,
+                'Lock event', 'Cancel');
+            if (!ok) return;
+            event.locked = true;
+            event.lockedAt = new Date().toISOString();
+            await saveCurrentEvent({ allowLocked: true });
+            applyLockState();
+            updateEventBanner();
+            switchTab(currentTab);
+            showToast('Event locked', 'success');
+        }
+
+        async function unlockEvent() {
+            if (!isLocked()) return;
+            const ok = await showCustomModal('Unlock this event?',
+                `<p>Anyone with the app will be able to change scores, players and matchups in <strong>${esc(event.name)}</strong> again, and delete it.</p>`,
+                'Unlock event', 'Keep locked');
+            if (!ok) return;
+            event.locked = false;
+            event.lockedAt = null;
+            applyLockState();
+            await saveCurrentEvent();
+            updateEventBanner();
+            switchTab(currentTab);
+            showToast('Event unlocked', 'success');
+        }
+
         function hasOpenEvent() {
             return !!(event && event.name && event.teams && event.teams.length >= 2);
         }
@@ -4955,6 +5119,7 @@
             if (tabName === 'setup') refreshEventsList();
 
             updatePrepNav();
+            applyLockState();
             requestAnimationFrame(measureTopbar);
             if (changed) window.scrollTo(0, 0);
         }
@@ -4983,6 +5148,7 @@
         // Create from the Events form, or save changes from Prep
         async function submitSettings() {
             const inPrep = document.getElementById('settingsForm').parentNode.id === 'settingsHost-prep';
+            if (inPrep && guardLocked()) return;
             const name = document.getElementById('eventName').value.trim();
             const t0 = document.getElementById('team0Name').value.trim();
             const t1 = document.getElementById('team1Name').value.trim();
@@ -5011,6 +5177,7 @@
             if (!nameEl) return;
             if (hasOpenEvent()) {
                 nameEl.textContent = event.name;
+                if (isLocked()) nameEl.insertAdjacentHTML('beforeend', ' <span class="lock-badge">Locked</span>');
                 nameEl.classList.remove('none');
                 const rounds = (event.rounds || []).length;
                 metaEl.textContent = `${event.teams[0].name} vs ${event.teams[1].name}, ${rounds} round${rounds === 1 ? '' : 's'}`;
@@ -5101,6 +5268,7 @@
                         teamNames: (blob.teams || []).map(t => t.name),
                         numRounds: rounds.length || e.num_rounds || 0,
                         firstDate: (rounds.find(r => r.date) || {}).date || null,
+                        locked: !!blob.locked,
                         savedDate: e.updated_at || e.created_at
                     };
                 });
@@ -5139,11 +5307,12 @@
                         <div style="min-width:0;">
                             <div class="event-name">${devIcon}${esc(evt.name)}</div>
                             <div class="event-sub">${parts.join(', ')}</div>
+                            ${evt.locked ? '<span class="lock-badge">Locked</span>' : ''}
                             ${isOpen ? '<div class="event-open-now">Open now</div>' : ''}
                         </div>
                         <div class="event-actions">
                             <button class="btn btn-sm" onclick="loadSavedEvent('${esc(evt.id)}')">${isOpen ? 'Continue' : 'Open'}</button>
-                            <button class="btn btn-danger btn-sm" onclick="deleteSavedEvent('${esc(evt.id)}')" aria-label="Delete ${esc(evt.name)}">Delete</button>
+                            ${evt.locked ? '' : `<button class="btn btn-danger btn-sm" onclick="deleteSavedEvent('${esc(evt.id)}')" aria-label="Delete ${esc(evt.name)}">Delete</button>`}
                         </div>
                     </li>`;
             });
@@ -5154,6 +5323,10 @@
         async function deleteSavedEvent(eventId) {
             const all = [...getSavedEvents(), ...(await getAllSavedEvents())];
             const target = all.find(e => String(e.id) === String(eventId));
+            if ((target && target.locked) || (hasOpenEvent() && String(event.id) === String(eventId) && isLocked())) {
+                showToast('Locked events can\'t be deleted. Unlock it first.', 'warning', 3500);
+                return;
+            }
             const label = target ? `"${esc(target.name)}"` : 'this event';
             const ok = await showCustomModal('Delete event?',
                 `<p>${label} and all of its scores will be deleted for everyone. This can't be undone.</p>`,
@@ -5252,6 +5425,14 @@
                         : player.smsConsent ? ' <span class="ok">texts on</span>' : '');
                 }
                 const actions = [];
+                if (isLocked()) {
+                    html += `
+                    <li class="player-item">
+                        <div class="player-name">${esc(player.name)}${isCaptain ? '<span class="captain-badge">Captain</span>' : ''}</div>
+                        ${meta ? `<div class="player-meta">${meta}</div>` : ''}
+                    </li>`;
+                    return;
+                }
                 if (!isCaptain) actions.push(`<button class="linkbtn" onclick="setCaptain(${teamIndex}, ${index})">Make captain</button>`);
                 if (player.phone) {
                     actions.push(`<button class="linkbtn" onclick="sendSMS(${teamIndex}, ${index})">Text</button>`);
@@ -5313,7 +5494,7 @@
                                 <span class="ml-side t0">${match.team0Players.map(esc).join(' &amp; ')}</span>
                                 <span class="ml-vs">vs</span>
                                 <span class="ml-side t1">${match.team1Players.map(esc).join(' &amp; ')}</span>
-                                <button class="linkbtn danger" onclick="deleteMatch(${roundIndex}, ${matchIndex})" aria-label="Remove match ${matchIndex + 1}">Remove</button>
+                                ${isLocked() ? '<span></span>' : `<button class="linkbtn danger" onclick="deleteMatch(${roundIndex}, ${matchIndex})" aria-label="Remove match ${matchIndex + 1}">Remove</button>`}
                             </li>`;
                     });
                     html += '</ol>';
@@ -5334,6 +5515,7 @@
                         </div>`;
                 };
 
+                if (isLocked()) { html += `</section>`; return; }
                 html += `
                         <div class="pairing">
                             <h4>${round.matches.length ? 'Add another match' : 'Add the first match'}</h4>
@@ -5344,7 +5526,7 @@
             });
 
             const allSet = event.rounds.length > 0 && event.rounds.every(r => r.matches.length > 0);
-            if (allSet) {
+            if (allSet && !isLocked()) {
                 html += `
                     <div class="ready">
                         <p>Every round has matchups.</p>
@@ -5368,7 +5550,7 @@
         // One leaderboard row's status
         function boardStatus(roundIndex, matchIndex) {
             const liveData = getLiveMatchData(roundIndex, matchIndex);
-            if (!liveData.hasScores) return { cls: 'idle', main: 'Not started', sub: 'Tap to score', ahead: null };
+            if (!liveData.hasScores) return { cls: 'idle', main: isLocked() ? 'Not played' : 'Not started', sub: isLocked() ? '' : 'Tap to score', ahead: null };
 
             if (event.scoringType === 'stroke') {
                 const a = liveData.team0Total || 0, b = liveData.team1Total || 0;
@@ -5439,6 +5621,9 @@
                         </button>`;
                 });
             });
+            html += isLocked()
+                ? `<div class="board-lock locked"><p><strong>Final.</strong> Locked${event.lockedAt ? ' on ' + fmtLockDate(event.lockedAt) : ''}, so these results can't change.</p></div>`
+                : `<div class="board-lock"><p>Event over? Lock it so the results can't be changed or deleted.</p><button class="btn btn-secondary" onclick="lockEvent()">Lock event</button></div>`;
             return html;
         }
 
@@ -5549,7 +5734,64 @@
             }
             html += `</tbody></table>`;
 
+            // ── Every match's strokes, listed by day ──
+            html += `<h3 class="list-heading">All scores by day</h3>`;
+            rounds.forEach((r, ri) => {
+                if (!(r.matches || []).length) return;
+                const course = getCourseForRound(ri);
+                const pars = Array.from({ length: 18 }, (_, h) => {
+                    const p = course && course.holes && course.holes[h] ? parseInt(course.holes[h].par) : NaN;
+                    return isNaN(p) ? null : p;
+                });
+                html += `<section class="day-list">
+                    <div class="day-list-head"><b>Round ${r.roundNumber}</b><span>${[r.date ? fmtDate(r.date) : null, r.format].filter(Boolean).map(esc).join(', ')}</span></div>
+                    <ol class="score-list">`;
+                let day0 = 0, day1 = 0, dayHoles = 0;
+                r.matches.forEach((m, mi) => {
+                    const a = teamHoleScores(ri, mi, 0), b = teamHoleScores(ri, mi, 1);
+                    // Count holes both sides have finished, same as the day totals
+                    let s0 = 0, s1 = 0, holes = 0, par = 0, parOk = true;
+                    for (let h = 0; h < 18; h++) {
+                        if (a[h] === null || b[h] === null) continue;
+                        s0 += a[h]; s1 += b[h]; holes++;
+                        if (pars[h] === null) parOk = false; else par += pars[h];
+                    }
+                    day0 += s0; day1 += s1; dayHoles += holes;
+                    const names0 = m.team0Players.map(esc).join(' &amp; ');
+                    const names1 = m.team1Players.map(esc).join(' &amp; ');
+                    const open = `onclick="setStrokesRound(${ri});selectLiveMatch(${ri},${mi});switchTab('live')"`;
+                    if (!holes) {
+                        html += `<li><button class="score-line idle" ${open}>
+                            <span class="sl-num">${mi + 1}</span>
+                            <span class="sl-side t0"><span class="sl-names">${names0}</span></span>
+                            <span class="sl-side t1"><span class="sl-names">${names1}</span></span>
+                            <span class="sl-status">Not started</span></button></li>`;
+                        return;
+                    }
+                    const tp = v => (parOk && par) ? `<small>${toPar(v, par)}</small>` : '';
+                    const st = boardStatus(ri, mi);
+                    html += `<li><button class="score-line" ${open}
+                            aria-label="Match ${mi + 1}: ${esc(m.team0Players.join(' and '))} ${s0}, ${esc(m.team1Players.join(' and '))} ${s1}, ${holes} holes">
+                        <span class="sl-num">${mi + 1}</span>
+                        <span class="sl-side t0${s0 < s1 ? ' low' : ''}"><span class="sl-names">${names0}</span><span class="sl-strokes">${s0}${tp(s0)}</span></span>
+                        <span class="sl-side t1${s1 < s0 ? ' low' : ''}"><span class="sl-names">${names1}</span><span class="sl-strokes">${s1}${tp(s1)}</span></span>
+                        <span class="sl-status">${st.sub === 'Final' ? 'Final' : `thru ${holes}`}</span>
+                    </button></li>`;
+                });
+                html += `</ol>`;
+                if (dayHoles) {
+                    html += `<div class="score-line day-total">
+                        <span class="sl-num"></span>
+                        <span class="sl-side t0${day0 < day1 ? ' low' : ''}"><span class="sl-names">${esc(t0)}</span><span class="sl-strokes">${day0}</span></span>
+                        <span class="sl-side t1${day1 < day0 ? ' low' : ''}"><span class="sl-names">${esc(t1)}</span><span class="sl-strokes">${day1}</span></span>
+                        <span class="sl-status">Day total</span>
+                    </div>`;
+                }
+                html += `</section>`;
+            });
+
             // ── Scorecards for the chosen day ──
+            html += `<h3 class="list-heading">Scorecards</h3>`;
             if (rounds.length > 1) {
                 html += `<div class="day-tabs" role="tablist" aria-label="Day">` + rounds.map((r, i) =>
                     `<button role="tab" aria-selected="${i === strokesRound}" class="${i === strokesRound ? 'active' : ''}" onclick="setStrokesRound(${i})">Round ${r.roundNumber}${r.date ? `<small>${fmtDate(r.date)}</small>` : ''}</button>`
@@ -5616,7 +5858,7 @@
                             </div>`}
                         </div>
                         ${s.cls === 'idle' ? '' : nine(a, b, 0, 'Out') + nine(a, b, 9, 'In')}
-                        <button class="linkbtn" onclick="selectLiveMatch(${ri},${mi});switchTab('live')">${s.cls === 'idle' ? 'Start scoring' : 'Edit scores'}</button>
+                        <button class="linkbtn" onclick="selectLiveMatch(${ri},${mi});switchTab('live')">${isLocked() ? 'View scores' : (s.cls === 'idle' ? 'Start scoring' : 'Edit scores')}</button>
                     </section>`;
             });
             container.innerHTML = html;
