@@ -37,6 +37,7 @@
             --display: 'Barlow Condensed', 'Arial Narrow', 'Helvetica Neue', sans-serif;
             --body: 'Barlow', system-ui, -apple-system, 'Segoe UI', sans-serif;
 
+            --field: #FFFFFF;
             --banner-h: 0px;
             --daynav-h: 62px;
         }
@@ -145,7 +146,8 @@
             -webkit-tap-highlight-color: transparent;
         }
         .daynav button.active { color: var(--board); border-top-color: var(--flag); }
-        @media (max-width: 380px) { .daynav button { font-size: 13px; } }
+        @media (max-width: 440px) { .daynav button { font-size: 12.5px; padding: 0 2px; } }
+        @media (max-width: 360px) { .daynav button { font-size: 11.5px; } }
 
         /* ── Page ── */
         .content { max-width: 760px; margin: 0 auto; padding: 22px 16px 56px; }
@@ -170,7 +172,7 @@
         label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; color: var(--ink-2); }
         input, select, textarea {
             width: 100%; font: 16px var(--body); color: var(--ink);
-            background: #fff; border: 1.5px solid var(--rule); border-radius: 8px; padding: 11px 12px;
+            background: var(--field); border: 1.5px solid var(--rule); border-radius: 8px; padding: 11px 12px;
             transition: border-color .15s, box-shadow .15s;
         }
         textarea { resize: vertical; }
@@ -271,7 +273,7 @@
         .pick-col.t1 .pick-team { color: var(--t1); }
         .pick { display: block; position: relative; margin: 0 0 6px; font-weight: 600; color: var(--ink); cursor: pointer; }
         .pick input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
-        .pick span { display: block; background: #fff; border: 1.5px solid var(--rule); border-radius: 8px; padding: 9px 10px; font-size: 15px; }
+        .pick span { display: block; background: var(--field); border: 1.5px solid var(--rule); border-radius: 8px; padding: 9px 10px; font-size: 15px; }
         .pick input:focus-visible + span { outline: 3px solid var(--flag); outline-offset: 1px; }
         .pick-col.t0 .pick input:checked + span { background: var(--t0); border-color: var(--t0); color: #fff; }
         .pick-col.t1 .pick input:checked + span { background: var(--t1); border-color: var(--t1); color: #fff; }
@@ -398,6 +400,122 @@
             .subnav button { font-size: 14px; padding: 7px 12px; }
         }
         .linkbtn.danger { color: var(--t1); font-weight: 600; }
+
+        /* ── Game day: strokes ── */
+        .strokes-note { color: var(--muted); font-size: 14px; margin: 4px 0 12px; }
+        .day-table { width: 100%; border-collapse: collapse; margin-bottom: 22px; font-variant-numeric: tabular-nums; }
+        .day-table th, .day-table td { padding: 9px 8px; border-bottom: 1px solid var(--rule); text-align: left; }
+        .day-table thead th { font-size: 14px; color: var(--muted); font-weight: 600; }
+        .day-table thead th.t0 { color: var(--t0); text-align: right; }
+        .day-table thead th.t1 { color: var(--t1); text-align: right; }
+        .day-table tbody th { font-weight: 600; }
+        .day-table tbody th .linkbtn { text-align: left; font-weight: 600; padding: 0; text-decoration: none; }
+        .day-table tbody th .linkbtn:hover { text-decoration: underline; }
+        .day-heading { margin-bottom: 2px; }
+        .day-table small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); text-decoration: none; }
+        .day-table td { text-align: right; font-family: var(--display); font-size: 24px; font-weight: 600; line-height: 1.05; }
+        .day-table td small { font-family: var(--body); }
+        .day-table td.low.t0 { color: var(--t0); font-weight: 700; }
+        .day-table td.low.t1 { color: var(--t1); font-weight: 700; }
+        .day-table td.none { font: 500 14px var(--body); color: var(--muted); text-align: right; }
+        .day-table tr.sel th { box-shadow: inset 4px 0 0 var(--flag); padding-left: 12px; }
+        .day-table tr.total th, .day-table tr.total td { border-bottom: 0; border-top: 2px solid var(--ink); }
+
+        .day-tabs { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 4px; scrollbar-width: none; }
+        .day-tabs button { flex: none; appearance: none; cursor: pointer; border: 1.5px solid var(--rule); background: #fff; color: var(--ink); border-radius: 8px; padding: 7px 12px; font: 700 15px var(--body); text-align: left; }
+        .day-tabs button small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
+        .day-tabs button.active { background: var(--ink); border-color: var(--ink); color: var(--board); }
+        .day-tabs button.active small { color: var(--mist); }
+
+        .match-strokes { border-top: 1px solid var(--rule); padding: 14px 0 6px; }
+        .ms-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+        .ms-title { font-family: var(--display); font-weight: 700; font-size: 20px; }
+        .ms-names { font-size: 14px; font-weight: 600; color: var(--muted); }
+        .ms-names .t0, .ms-total .t0 { color: var(--t0); }
+        .ms-names .t1, .ms-total .t1 { color: var(--t1); }
+        .ms-total { text-align: right; font-family: var(--display); font-weight: 700; font-size: 28px; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .ms-total .ms-dash { color: var(--muted); margin: 0 6px; font-weight: 500; }
+        .ms-total small { display: block; font: 500 12px var(--body); color: var(--muted); margin-top: 4px; }
+
+        .card-wrap { overflow-x: auto; margin-bottom: 8px; }
+        .card { width: 100%; min-width: 300px; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; font-size: 14px; }
+        .card th, .card td { border: 1px solid var(--rule); text-align: center; padding: 5px 0; height: 32px; }
+        .card thead th { background: var(--ink); color: var(--board); font-weight: 600; font-size: 13px; border-color: var(--ink); }
+        .card th:first-child { width: 64px; text-align: left; padding-left: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .card .sum { width: 40px; font-weight: 700; background: var(--mist); }
+        .card thead .sum { background: var(--ink-2); }
+        .card tr.par td, .card tr.par th { color: var(--muted); font-size: 13px; }
+        .card tr.t0 th { color: var(--t0); font-weight: 700; }
+        .card tr.t1 th { color: var(--t1); font-weight: 700; }
+        .card tr.t0 td.won { background: var(--t0-tint); font-weight: 700; color: var(--t0); }
+        .card tr.t1 td.won { background: var(--t1-tint); font-weight: 700; color: var(--t1); }
+        /* scorecard notation: circles under par, squares over */
+        .sc { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; line-height: 1; }
+        .sc.birdie { border: 1.5px solid currentColor; border-radius: 50%; }
+        .sc.eagle { border: 1.5px solid currentColor; border-radius: 50%; box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px currentColor; }
+        .sc.bogey { border: 1.5px solid currentColor; }
+        .sc.dbl { border: 1.5px solid currentColor; box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px currentColor; }
+        @media (max-width: 400px) {
+            .card { font-size: 13px; }
+            .card th:first-child { width: 52px; }
+            .card .sum { width: 34px; }
+            .sc { width: 19px; height: 19px; }
+        }
+
+        /* ── Dark grounds for Events and Prep ──
+           Each mode keeps its own color so you always know where you are:
+           Events = charcoal, Prep = slate blue, Game Day = turf green. */
+        body[data-mode="events"], body[data-mode="prep"] {
+            color-scheme: dark;
+            --ink: #EDF2EE;
+            --ink-2: #C7D1CB;
+            --muted: #97A59E;
+            --t0: #82B2F0;
+            --t1: #F28E84;
+            --t0-tint: rgba(130,178,240,0.15);
+            --t1-tint: rgba(242,142,132,0.15);
+            --go: #62C990;
+        }
+        body[data-mode="events"] {
+            --ground: #15191A;
+            --paper: #1F2526;
+            --mist: #283031;
+            --rule: #374143;
+            --field: #101415;
+            background: var(--ground);
+        }
+        body[data-mode="prep"] {
+            --ground: #16222D;
+            --paper: #1F2E3B;
+            --mist: #2A3B4A;
+            --rule: #384C5D;
+            --field: #111C26;
+            background: var(--ground);
+        }
+        body[data-mode="events"] .topbar,
+        body[data-mode="prep"] .topbar { background: var(--ground); }
+        body[data-mode="events"] .mode-step,
+        body[data-mode="prep"] .mode-step { color: var(--rule); }
+        body[data-mode="events"] .mode.active .mode-step,
+        body[data-mode="prep"] .mode.active .mode-step { color: var(--flag); }
+        /* team-color fills keep full strength so white text stays readable */
+        body[data-mode="prep"] .pick-col.t0 .pick input:checked + span { background: #1D5AA6; border-color: #1D5AA6; }
+        body[data-mode="prep"] .pick-col.t1 .pick input:checked + span { background: #C2362E; border-color: #C2362E; }
+        body[data-mode="events"] input::placeholder,
+        body[data-mode="prep"] input::placeholder,
+        body[data-mode="prep"] textarea::placeholder { color: #7D8A84; }
+
+        /* Light paper islands: scorecard/course cards, dialogs, the policy page */
+        .light-island,
+        [id^="courseSelected"],
+        [id^="courseResults"] > div[style*="background:white"] {
+            color-scheme: light;
+            --paper: #FBFCFA; --mist: #E3EAE5; --rule: #CAD5CE; --field: #FFFFFF;
+            --ink: #16231D; --ink-2: #34443C; --muted: #5B6B63;
+            --t0: #1D5AA6; --t1: #C2362E; --t0-tint: #E3ECF7; --t1-tint: #F8E4E2; --go: #2E7D4F;
+            color: var(--ink);
+        }
+        .policy-doc { background: var(--paper); border-radius: 12px; padding: 20px; }
     </style>
 
     <!-- Supabase SDK -->
@@ -511,7 +629,7 @@
 
         <section id="privacy" class="tab-content">
             <button class="back" onclick="switchTab('setup')">Events</button>
-            <div style="max-width: 700px;">
+            <div class="light-island policy-doc" style="max-width: 700px;">
                     <h1 class="page-title" style="margin-bottom:16px;">SMS privacy &amp; terms</h1>
                     
                     <div style="background: #e8f5e8; border: 2px solid var(--go); border-radius: 8px; padding: 16px; margin-bottom: 20px;">
@@ -643,6 +761,9 @@
         <section id="live" class="tab-content">
             <div class="sheet"><div id="liveContent"></div></div>
         </section>
+        <section id="strokes" class="tab-content">
+            <div class="sheet"><div id="strokesContent"></div></div>
+        </section>
         <section id="standings" class="tab-content">
             <div class="sheet"><div id="standingsContent"></div></div>
         </section>
@@ -662,6 +783,7 @@
         <div class="daynav-inner">
             <button data-tab="livescoreboard" onclick="switchTab('livescoreboard')">Board</button>
             <button data-tab="live" onclick="switchTab('live')">Score</button>
+            <button data-tab="strokes" onclick="switchTab('strokes')">Strokes</button>
             <button data-tab="standings" onclick="switchTab('standings')">Standings</button>
             <button data-tab="kickouts" onclick="switchTab('kickouts')">Kickouts</button>
             <button data-tab="sombreros" onclick="switchTab('sombreros')">Sombreros</button>
@@ -4460,7 +4582,7 @@
                 const overlay = document.createElement('div');
                 overlay.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:16px;';
                 overlay.innerHTML = `
-                    <div style="background:white;border-radius:14px;max-width:420px;width:100%;max-height:85vh;overflow:auto;box-shadow:0 20px 40px rgba(0,0,0,0.3);">
+                    <div class="light-island" style="background:var(--paper);border-radius:14px;max-width:420px;width:100%;max-height:85vh;overflow:auto;box-shadow:0 20px 40px rgba(0,0,0,0.3);">
                         <div data-act="title" style="padding:18px 20px 10px;font-weight:700;font-size:1.15em;color:var(--ink);"></div>
                         <div style="padding:0 20px 14px;color:#444;line-height:1.5;">${bodyHtml}</div>
                         <div style="display:flex;gap:10px;justify-content:flex-end;padding:12px 20px 18px;border-top:1px solid #eee;">
@@ -4752,7 +4874,7 @@
         const TAB_MODE = {
             setup: 'events', create: 'events', privacy: 'events',
             teams: 'prep', matchups: 'prep', eventsettings: 'prep', messages: 'prep',
-            livescoreboard: 'gameday', live: 'gameday', standings: 'gameday',
+            livescoreboard: 'gameday', live: 'gameday', strokes: 'gameday', standings: 'gameday',
             kickouts: 'gameday', sombreros: 'gameday', scoring: 'gameday'
         };
         const lastTabInMode = { events: 'setup', prep: 'teams', gameday: 'livescoreboard' };
@@ -4802,6 +4924,8 @@
             currentTab = tabName;
             lastTabInMode[mode] = tabName;
             document.body.dataset.mode = mode;
+            const themeMeta = document.querySelector('meta[name="theme-color"]');
+            if (themeMeta) themeMeta.setAttribute('content', { events: '#15191A', prep: '#16222D', gameday: '#123D2C' }[mode]);
 
             document.querySelectorAll('.tab-content').forEach(el => el.classList.toggle('active', el.id === tabName));
             ['events', 'prep', 'gameday'].forEach(m => {
@@ -4827,6 +4951,7 @@
             if (tabName === 'teams') renderBothRosters();
             if (tabName === 'kickouts') renderKickouts();
             if (tabName === 'sombreros') renderSombreros();
+            if (tabName === 'strokes') renderStrokes();
             if (tabName === 'setup') refreshEventsList();
 
             updatePrepNav();
@@ -4936,7 +5061,7 @@
             const lift = document.body.dataset.mode === 'gameday' ? 'calc(var(--daynav-h) + 16px)' : '24px';
             toast.style.cssText = `
                 position:fixed; left:50%; bottom:${lift}; transform:translateX(-50%) translateY(12px);
-                background:var(--ink); color:var(--board); padding:11px 18px 11px 14px; border-radius:10px;
+                background:#0E1512; color:#F6F7F2; padding:11px 18px 11px 14px; border-radius:10px;
                 font:600 15px var(--body); z-index:99999; opacity:0; pointer-events:none;
                 box-shadow:0 6px 24px rgba(0,0,0,0.28); max-width:calc(100vw - 32px);
                 border-left:5px solid ${marks[type] || marks.info};
@@ -5321,6 +5446,180 @@
             const container = document.getElementById('liveScoreboardContent');
             if (!hasOpenEvent()) { container.innerHTML = ''; return; }
             container.innerHTML = renderLiveScoreboard();
+            // Runs after every score change and live update, so keep Strokes current too
+            if (currentTab === 'strokes') renderStrokes();
+        }
+
+        // ── Strokes: each team's strokes, by day and hole ──────────────────
+
+        let strokesRound = null;   // which day's scorecards are showing
+
+        // A team's score on each hole: the best score among its players
+        // (same rule match play uses — covers scramble, best ball and singles)
+        function teamHoleScores(roundIndex, matchIndex, team) {
+            const match = event.rounds[roundIndex].matches[matchIndex];
+            const ls = (event.liveScores[roundIndex] || {})[matchIndex] || {};
+            const players = team === 0 ? match.team0Players : match.team1Players;
+            const holes = [];
+            for (let h = 0; h < 18; h++) {
+                const vals = players.map(p => Array.isArray(ls[p]) ? ls[p][h] : null).filter(v => v !== null && v !== undefined);
+                holes.push(vals.length ? Math.min(...vals) : null);
+            }
+            return holes;
+        }
+
+        function sumHoles(arr, from = 0, to = 18) {
+            let total = 0, n = 0;
+            for (let i = from; i < to; i++) if (arr[i] !== null) { total += arr[i]; n++; }
+            return { total, n };
+        }
+
+        // Strokes for both teams across one day, counting only holes both teams have finished
+        function dayStrokes(roundIndex) {
+            const round = event.rounds[roundIndex];
+            const out = { t0: 0, t1: 0, holes: 0, par: 0, parKnown: true };
+            const course = getCourseForRound(roundIndex);
+            (round.matches || []).forEach((m, mi) => {
+                const a = teamHoleScores(roundIndex, mi, 0), b = teamHoleScores(roundIndex, mi, 1);
+                for (let h = 0; h < 18; h++) {
+                    if (a[h] === null || b[h] === null) continue;
+                    out.t0 += a[h]; out.t1 += b[h]; out.holes++;
+                    const par = course && course.holes && course.holes[h] ? parseInt(course.holes[h].par) : NaN;
+                    if (isNaN(par)) out.parKnown = false; else out.par += par;
+                }
+            });
+            return out;
+        }
+
+        function toPar(strokes, par) {
+            const d = strokes - par;
+            return d === 0 ? 'E' : (d > 0 ? '+' + d : String(d));
+        }
+
+        function setStrokesRound(i) { strokesRound = i; renderStrokes(); }
+
+        function renderStrokes() {
+            const container = document.getElementById('strokesContent');
+            if (!container) return;
+            if (!hasOpenEvent()) { container.innerHTML = ''; return; }
+            const rounds = event.rounds || [];
+            const t0 = event.teams[0].name, t1 = event.teams[1].name;
+            // Short labels for the scorecard rows: "Team Javi" → "Javi"
+            const short = n => (String(n).replace(/^team\s+/i, '') || n);
+            const fmtDate = d => new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+            if (!rounds.some(r => (r.matches || []).length)) {
+                container.innerHTML = `<h2>Strokes</h2><div class="empty-state"><h3>No matches yet</h3><p>Set up matchups in Prep, then scores show up here by day.</p></div>`;
+                return;
+            }
+
+            // Default to the latest day that has scores, else the first day
+            if (strokesRound === null || strokesRound >= rounds.length) {
+                strokesRound = 0;
+                rounds.forEach((r, i) => { if (dayStrokes(i).holes > 0) strokesRound = i; });
+            }
+
+            // ── Every day at a glance ──
+            let html = `<h2>Strokes</h2>
+                <p class="strokes-note">Each team's total strokes per day, counting holes both sides have finished.</p>
+                <table class="day-table">
+                    <thead><tr><th scope="col">Day</th><th scope="col" class="t0">${esc(t0)}</th><th scope="col" class="t1">${esc(t1)}</th></tr></thead>
+                    <tbody>`;
+            let all0 = 0, all1 = 0, anyScores = false;
+            rounds.forEach((r, i) => {
+                const d = dayStrokes(i);
+                const scored = (r.matches || []).filter((m, mi) => getLiveMatchData(i, mi).hasScores).length;
+                const sub = [r.date ? fmtDate(r.date) : null, scored ? `${scored} match${scored === 1 ? '' : 'es'}` : null].filter(Boolean).join(', ');
+                const label = `Round ${r.roundNumber}${sub ? `<small>${sub}</small>` : ''}`;
+                if (d.holes === 0) {
+                    html += `<tr class="${i === strokesRound ? 'sel' : ''}"><th scope="row"><button class="linkbtn" onclick="setStrokesRound(${i})">${label}</button></th><td colspan="2" class="none">No scores yet</td></tr>`;
+                    return;
+                }
+                anyScores = true;
+                all0 += d.t0; all1 += d.t1;
+                const par = d.parKnown && d.par ? d.par : null;
+                const cell = (v, other, cls) => `<td class="${cls}${v < other ? ' low' : ''}">${v}${par ? `<small>${toPar(v, par)}</small>` : ''}</td>`;
+                html += `<tr class="${i === strokesRound ? 'sel' : ''}">
+                    <th scope="row"><button class="linkbtn" onclick="setStrokesRound(${i})">${label}</button></th>
+                    ${cell(d.t0, d.t1, 't0')}${cell(d.t1, d.t0, 't1')}</tr>`;
+            });
+            if (anyScores && rounds.length > 1) {
+                html += `<tr class="total"><th scope="row">All days</th>
+                    <td class="t0${all0 < all1 ? ' low' : ''}">${all0}</td><td class="t1${all1 < all0 ? ' low' : ''}">${all1}</td></tr>`;
+            }
+            html += `</tbody></table>`;
+
+            // ── Scorecards for the chosen day ──
+            if (rounds.length > 1) {
+                html += `<div class="day-tabs" role="tablist" aria-label="Day">` + rounds.map((r, i) =>
+                    `<button role="tab" aria-selected="${i === strokesRound}" class="${i === strokesRound ? 'active' : ''}" onclick="setStrokesRound(${i})">Round ${r.roundNumber}${r.date ? `<small>${fmtDate(r.date)}</small>` : ''}</button>`
+                ).join('') + `</div>`;
+            } else {
+                html += `<h3 class="day-heading">Round ${rounds[0].roundNumber} scorecards</h3>`;
+            }
+
+            const ri = strokesRound, round = rounds[ri];
+            const course = getCourseForRound(ri);
+            const pars = Array.from({ length: 18 }, (_, h) => {
+                const p = course && course.holes && course.holes[h] ? parseInt(course.holes[h].par) : NaN;
+                return isNaN(p) ? null : p;
+            });
+            const hasPar = pars.every(p => p !== null);
+            html += `<p class="strokes-note">${esc(round.format)}${course ? ` at ${esc(course.name)}` : ''}${hasPar ? '. Circles are under par, squares over par.' : ''}</p>`;
+
+            if (!round.matches.length) {
+                html += `<div class="empty-state"><p>No matches this round.</p></div>`;
+            }
+
+            const mark = (v, par) => {
+                if (v === null) return '';
+                if (par === null) return String(v);
+                const d = v - par;
+                const cls = d <= -2 ? 'eagle' : d === -1 ? 'birdie' : d === 1 ? 'bogey' : d >= 2 ? 'dbl' : '';
+                return cls ? `<span class="sc ${cls}">${v}</span>` : String(v);
+            };
+
+            const nine = (a, b, from, label) => {
+                const sa = sumHoles(a, from, from + 9), sb = sumHoles(b, from, from + 9);
+                const sp = pars.slice(from, from + 9).reduce((s, p) => s + (p || 0), 0);
+                let head = '<tr><th scope="col">Hole</th>', parRow = '<tr class="par"><th scope="row">Par</th>', r0 = `<tr class="t0"><th scope="row" title="${esc(t0)}">${esc(short(t0))}</th>`, r1 = `<tr class="t1"><th scope="row" title="${esc(t1)}">${esc(short(t1))}</th>`;
+                for (let h = from; h < from + 9; h++) {
+                    head += `<th scope="col">${h + 1}</th>`;
+                    parRow += `<td>${pars[h] ?? ''}</td>`;
+                    const won0 = a[h] !== null && b[h] !== null && a[h] < b[h];
+                    const won1 = a[h] !== null && b[h] !== null && b[h] < a[h];
+                    r0 += `<td class="${won0 ? 'won' : ''}">${mark(a[h], pars[h])}</td>`;
+                    r1 += `<td class="${won1 ? 'won' : ''}">${mark(b[h], pars[h])}</td>`;
+                }
+                head += `<th scope="col" class="sum">${label}</th></tr>`;
+                parRow += `<td class="sum">${hasPar ? sp : ''}</td></tr>`;
+                r0 += `<td class="sum">${sa.n ? sa.total : ''}</td></tr>`;
+                r1 += `<td class="sum">${sb.n ? sb.total : ''}</td></tr>`;
+                return `<div class="card-wrap"><table class="card"><thead>${head}</thead><tbody>${hasPar ? parRow : ''}${r0}${r1}</tbody></table></div>`;
+            };
+
+            round.matches.forEach((match, mi) => {
+                const a = teamHoleScores(ri, mi, 0), b = teamHoleScores(ri, mi, 1);
+                const ta = sumHoles(a), tb = sumHoles(b);
+                const s = boardStatus(ri, mi);
+                html += `
+                    <section class="match-strokes">
+                        <div class="ms-head">
+                            <div>
+                                <div class="ms-title">Match ${mi + 1}</div>
+                                <div class="ms-names"><span class="t0">${match.team0Players.map(esc).join(' &amp; ')}</span> vs <span class="t1">${match.team1Players.map(esc).join(' &amp; ')}</span></div>
+                            </div>
+                            ${s.cls === 'idle' ? '<div class="ms-total"><small>Not started</small></div>' : `
+                            <div class="ms-total" aria-label="Total strokes: ${esc(short(t0))} ${ta.total}, ${esc(short(t1))} ${tb.total}">
+                                <span class="t0">${ta.total}</span><span class="ms-dash">–</span><span class="t1">${tb.total}</span>
+                                <small>${s.main} ${s.sub === 'Final' ? 'final' : s.sub}</small>
+                            </div>`}
+                        </div>
+                        ${s.cls === 'idle' ? '' : nine(a, b, 0, 'Out') + nine(a, b, 9, 'In')}
+                        <button class="linkbtn" onclick="selectLiveMatch(${ri},${mi});switchTab('live')">${s.cls === 'idle' ? 'Start scoring' : 'Edit scores'}</button>
+                    </section>`;
+            });
+            container.innerHTML = html;
         }
 
         // Single-field dialog. Resolves with the trimmed text, or null if cancelled.
@@ -5329,7 +5628,7 @@
                 const overlay = document.createElement('div');
                 overlay.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(10,20,15,0.55);display:flex;align-items:center;justify-content:center;padding:16px;';
                 overlay.innerHTML = `
-                    <form style="background:var(--paper);color:var(--ink);border-radius:12px;max-width:400px;width:100%;padding:20px;box-shadow:0 20px 40px rgba(0,0,0,0.3);">
+                    <form class="light-island" style="background:var(--paper);color:var(--ink);border-radius:12px;max-width:400px;width:100%;padding:20px;box-shadow:0 20px 40px rgba(0,0,0,0.3);">
                         <h3 style="margin-bottom:12px;"></h3>
                         <label for="askTextInput"></label>
                         <input id="askTextInput" autocomplete="off">
